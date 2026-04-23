@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TypingFlow Agent</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Setup view (API key entry) ───────────────────────────────────── -->
+    <div id="setup-view" class="view hidden">
+      <div class="setup-body">
+        <div class="logo">TF</div>
+        <h2>TypingFlow Agent</h2>
+        <p>Paste your Gemini API key to get started.</p>
+        <input id="api-key-input" type="password" placeholder="AIza…" autocomplete="off">
+        <button id="save-key-btn" class="btn-primary">Save &amp; Continue</button>
+        <a class="link" href="https://aistudio.google.com/app/apikey" target="_blank">
+          Get a free API key →
+        </a>
+      </div>
+    </div>
+
+    <!-- ── Main view ────────────────────────────────────────────────────── -->
+    <div id="main-view" class="view hidden">
+
+      <header class="panel-header">
+        <div class="header-logo">TF</div>
+        <span class="header-title">TypingFlow Agent</span>
+        <button id="settings-btn" class="icon-btn" title="Change API key">⚙</button>
+      </header>
+
+      <!-- Captured text preview -->
+      <section class="section field-section">
+        <div class="section-label">
+          Captured text
+          <span id="word-badge" class="badge"></span>
+        </div>
+        <div id="field-preview" class="preview-box">
+          Focus a text field on the page, then click ↻.
+        </div>
+        <button id="refresh-btn" class="btn-small">↻ Refresh from page</button>
+      </section>
+
+      <!-- Prompt + run -->
+      <section class="section prompt-section">
+        <textarea id="prompt-input" rows="2"
+          placeholder="Analyse my writing and give a full report."></textarea>
+        <button id="run-btn" class="btn-primary">▶ Run Agent</button>
+      </section>
+
+      <!-- Reasoning chain -->
+      <section id="chain-section" class="section chain-section hidden">
+        <div class="section-label">Reasoning Chain</div>
+        <div id="spinner" class="spinner hidden">
+          <div class="dot"></div>
+          <span>Agent working…</span>
+        </div>
+        <div id="steps-container"></div>
+      </section>
+
+      <!-- Final report -->
+      <section id="report-section" class="section report-section hidden">
+        <div class="section-label">Final Report</div>
+        <div id="report-body" class="report-body"></div>
+        <div class="report-actions">
+          <button id="copy-btn" class="btn-primary">Copy report</button>
+          <button id="reset-btn" class="btn-small">New analysis</button>
+        </div>
+      </section>
+
+    </div><!-- /main-view -->
+  </div><!-- /app -->
+
+  <script src="panel.js"></script>
+</body>
+</html>

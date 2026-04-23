@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "TypingFlow Agent",
+  "version": "1.0.0",
+  "description": "Multi-stage Gemini AI writing analyser: count, chunk, summarise, score.",
+  "permissions": ["storage", "scripting", "tabs", "activeTab"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "TypingFlow Agent"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["panel/panel.html", "panel/panel.css", "panel/panel.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
