@@ -2,266 +2,352 @@
 
 ## Goal
 
-Extend the Gemini-typingflow Chrome extension (assignment 2) into a fully agentic AI plugin (assignment 3). The extension must:
-
-- Run a multi-turn Gemini conversation with tool-calling enabled
-- Execute at least 3 custom tool functions
-- Display the full reasoning chain (each tool call + result), not just the final answer
-- Maintain complete conversation history across every LLM hop
+Extend Gemini-typingflow (assignment 2) into a multi-stage agentic writing analyser. The agent captures text from the active browser field and processes it through a fixed pipeline of tool calls — counting, chunking, summarising, scoring — before the LLM synthesises a final report. Every stage is visible to the user in the panel's reasoning chain.
 
 ---
 
-## Starting Point
+## Pipeline Overview
 
-Base repo: [Gemini-typingflow](https://github.com/sujitojha1/Gemini-typingflow)
+```
+User text (from focused field)
+        │
+        ▼ Tool call 1
+   count_stats(text)
+   → word count, sentence count, paragraph count,
+     avg sentence length, reading time
+        │
+        ▼ Tool call 2
+   chunk_text(text, max_words=120)
+   → [ chunk_0, chunk_1, ..., chunk_N ]
+        │
+        ├─ Tool call 3a  summarize_chunk(chunk_0) → { summary }
+        ├─ Tool call 3b  summarize_chunk(chunk_1) → { summary }
+        │   ...
+        ├─ Tool call 4a  score_chunk(chunk_0) → { readability, clarity, coherence, feedback }
+        ├─ Tool call 4b  score_chunk(chunk_1) → { scores... }
+        │   ...
+        ▼
+   LLM synthesis
+   → overall score, ranked issues, rewrite suggestions
+```
 
-That repo already has:
-- `manifest.json` with basic permissions
-- A content script that detects active text fields
-- A popup / panel that sends a prompt to Gemini and shows the reply
-
-What we are adding: agent loop, tool definitions, and a real-time reasoning chain UI.
+The full `messages` array (user prompt + every functionCall/functionResponse pair) is passed to Gemini on each iteration. Later stages therefore have full context of earlier results.
 
 ---
 
-## Phase 1 — Repository Setup (Day 1)
+## Stage Breakdown
 
-**Tasks**
-- [ ] Clone base repo into `Gemini-typingflow-agentic`
-- [ ] Audit existing `manifest.json` — add `storage`, `scripting`, `tabs` permissions if missing
-- [ ] Create folder structure shown in README (`tools/`, `panel/`)
-- [ ] Add `.gitignore` (node_modules, secrets)
-- [ ] Confirm extension loads in Chrome with no console errors
+### Stage 1 — `count_stats`
 
-**Files touched**
-- `manifest.json`
-- `.gitignore`
+**Purpose:** Establish baseline metrics before any LLM work. Grounds the model in concrete numbers so it cannot hallucinate statistics.
 
-**Acceptance check:** Extension loads, popup opens, existing text-insertion still works.
-
----
-
-## Phase 2 — Tool Implementations (Days 2–3)
-
-Each tool is a plain JavaScript function plus a JSON schema declaration for the Gemini API.
-
-### Tool 1: `evaluate_expression`
-
-**File:** `tools/evaluate_expression.js`
+**Implementation:** Pure JavaScript, no network call.
 
 ```js
-// Schema (sent to Gemini as a function declaration)
-{
-  name: "evaluate_expression",
-  description: "Evaluates a mathematical expression and returns a numeric result.",
-  parameters: {
-    type: "OBJECT",
-    properties: {
-      expression: { type: "STRING", description: "Math expression, e.g. 'e^1 + e^2 + e^3'" }
-    },
-    required: ["expression"]
-  }
-}
-
-// Implementation
-function evaluate_expression({ expression }) {
-  // Use mathjs (CDN) for safe evaluation — no eval()
-  return { result: math.evaluate(expression) };
+// tools/count_stats.js
+export function count_stats({ text }) {
+  const words      = text.trim().split(/\s+/).filter(Boolean);
+  const sentences  = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const paragraphs = text.split(/\n{2,}/).filter(p => p.trim().length > 0);
+  return {
+    word_count:          words.length,
+    sentence_count:      sentences.length,
+    paragraph_count:     paragraphs.length,
+    avg_sentence_length: +(words.length / sentences.length).toFixed(1),
+    reading_time_sec:    Math.ceil(words.length / 3.3)   // ~200 wpm
+  };
 }
 ```
 
-**Test case:** `evaluate_expression({ expression: "e^1+e^1+e^2+e^3+e^5+e^8" })` → `49.33`
+**Gemini function declaration:**
+```json
+{
+  "name": "count_stats",
+  "description": "Counts words, sentences, paragraphs, average sentence length, and reading time in the provided text.",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "text": { "type": "STRING", "description": "The full text to analyse." }
+    },
+    "required": ["text"]
+  }
+}
+```
 
 ---
 
-### Tool 2: `get_stock_price`
+### Stage 2 — `chunk_text`
 
-**File:** `tools/get_stock_price.js`
+**Purpose:** Break the text into coherent pieces so summarisation and scoring can be applied at a granular level rather than to the whole blob.
+
+**Implementation:** Pure JavaScript. Respects paragraph boundaries first; splits oversized paragraphs at sentence boundaries.
 
 ```js
-{
-  name: "get_stock_price",
-  description: "Returns daily OHLCV stock data for a ticker over a date range.",
-  parameters: {
-    type: "OBJECT",
-    properties: {
-      ticker:     { type: "STRING", description: "Stock symbol, e.g. AAPL" },
-      start_date: { type: "STRING", description: "YYYY-MM-DD" },
-      end_date:   { type: "STRING", description: "YYYY-MM-DD" }
-    },
-    required: ["ticker", "start_date", "end_date"]
+// tools/chunk_text.js
+export function chunk_text({ text, max_words = 120 }) {
+  const paragraphs = text.split(/\n{2,}/).filter(p => p.trim());
+  const chunks = [];
+  for (const para of paragraphs) {
+    const wordCount = para.split(/\s+/).length;
+    if (wordCount <= max_words) {
+      chunks.push(para.trim());
+    } else {
+      // split at sentence boundaries
+      const sentences = para.split(/(?<=[.!?])\s+/);
+      let current = [];
+      let currentLen = 0;
+      for (const sent of sentences) {
+        const len = sent.split(/\s+/).length;
+        if (currentLen + len > max_words && current.length) {
+          chunks.push(current.join(' '));
+          current = [];
+          currentLen = 0;
+        }
+        current.push(sent);
+        currentLen += len;
+      }
+      if (current.length) chunks.push(current.join(' '));
+    }
   }
-}
-
-async function get_stock_price({ ticker, start_date, end_date }) {
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY`
-            + `&symbol=${ticker}&apikey=${FINANCE_API_KEY}`;
-  const data = await fetch(url).then(r => r.json());
-  // filter to requested date range, return array of { date, open, close, volume }
+  return { chunks };
 }
 ```
 
-**Test case:** `get_stock_price({ ticker: "AAPL", start_date: "2025-03-01", end_date: "2025-03-31" })`
+**Gemini function declaration:**
+```json
+{
+  "name": "chunk_text",
+  "description": "Splits text into semantically coherent chunks of at most max_words words, respecting paragraph and sentence boundaries.",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "text":           { "type": "STRING",  "description": "Full text to split." },
+      "max_words":      { "type": "INTEGER", "description": "Target max words per chunk (default 120)." }
+    },
+    "required": ["text"]
+  }
+}
+```
 
 ---
 
-### Tool 3: `search_news`
+### Stage 3 — `summarize_chunk`
 
-**File:** `tools/search_news.js`
+**Purpose:** Produce a one-sentence distillation of each chunk. Called once per chunk. Gives the LLM (and the user) a quick map of the text's structure before scoring.
+
+**Implementation:** A focused `generateContent` call — not a recursive agent loop. Uses the same Gemini API key already in storage.
 
 ```js
+// tools/summarize_chunk.js
+export async function summarize_chunk({ chunk }) {
+  const prompt = `Summarise the following passage in exactly one sentence:\n\n${chunk}`;
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: 80, temperature: 0.2 }
+  };
+  const res  = await callGemini(body);          // shared fetch wrapper
+  const text = res.candidates[0].content.parts[0].text.trim();
+  return { summary: text };
+}
+```
+
+**Gemini function declaration:**
+```json
 {
-  name: "search_news",
-  description: "Searches for recent news articles matching a query.",
-  parameters: {
-    type: "OBJECT",
-    properties: {
-      query:     { type: "STRING", description: "Search term, e.g. 'Ola stock'" },
-      days_back: { type: "INTEGER", description: "How many days back to search" }
+  "name": "summarize_chunk",
+  "description": "Returns a one-sentence summary of the provided text chunk.",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "chunk": { "type": "STRING", "description": "The chunk of text to summarise." }
     },
-    required: ["query", "days_back"]
+    "required": ["chunk"]
   }
 }
+```
 
-async function search_news({ query, days_back }) {
-  const from = new Date(Date.now() - days_back * 86400000).toISOString().slice(0,10);
-  const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}`
-            + `&from=${from}&sortBy=publishedAt&apiKey=${NEWS_API_KEY}`;
-  const data = await fetch(url).then(r => r.json());
-  return data.articles.slice(0, 10).map(a => ({
-    title: a.title, url: a.url, published_at: a.publishedAt, summary: a.description
-  }));
+---
+
+### Stage 4 — `score_chunk`
+
+**Purpose:** Score each chunk on three dimensions and provide a short actionable feedback note. This is the highest-signal output for the writer.
+
+**Implementation:** Focused `generateContent` call with a structured JSON output instruction.
+
+```js
+// tools/score_chunk.js
+export async function score_chunk({ chunk }) {
+  const prompt = `Score the following passage on three dimensions, each from 1 (poor) to 10 (excellent).
+Return ONLY valid JSON matching this schema:
+{ "readability": int, "clarity": int, "coherence": int, "feedback": "one sentence" }
+
+Passage:
+${chunk}`;
+  const body = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: 120, temperature: 0.1 }
+  };
+  const res  = await callGemini(body);
+  const raw  = res.candidates[0].content.parts[0].text;
+  return JSON.parse(raw.match(/\{[\s\S]*\}/)[0]);
 }
 ```
 
-**Test case:** `search_news({ query: "Tesla earnings", days_back: 14 })`
-
----
-
-**Phase 2 acceptance check:** Each function can be called from the browser console and returns valid data.
-
----
-
-## Phase 3 — Agent Loop in background.js (Days 3–4)
-
-The agent loop lives in the service worker so it can make `fetch` calls across origins.
-
-```
-background.js
-  ├── onMessage listener (receives prompt from panel)
-  ├── runAgentLoop(userMessage)
-  │     ├── messages = [{ role: "user", parts: [{ text }] }]
-  │     ├── loop:
-  │     │     POST to Gemini /generateContent with tools declared
-  │     │     if candidate.finishReason === "STOP" → done
-  │     │     if candidate has functionCall parts:
-  │     │           execute matching tool function
-  │     │           push { role: "model", parts: [functionCallPart] }
-  │     │           push { role: "user", parts: [{ functionResponse: { name, response } }] }
-  │     │           sendStep(toolName, args, result)  ← streams to panel
-  │     │           continue loop
-  └── sendFinalAnswer(text)
+**Gemini function declaration:**
+```json
+{
+  "name": "score_chunk",
+  "description": "Scores a text chunk on readability, clarity, and coherence (each 1–10) and returns one-sentence feedback.",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "chunk": { "type": "STRING", "description": "The chunk of text to score." }
+    },
+    "required": ["chunk"]
+  }
+}
 ```
 
-**Key details:**
-- `messages` array is rebuilt and passed in full on every Gemini call — this is how history is preserved
-- `sendStep()` uses `chrome.tabs.sendMessage` to push each intermediate step to `panel.js` in real time
-- Cap loop iterations at 10 to avoid infinite cycles
-
-**Files:** `background.js`, `tools/tools.js` (barrel that exports all tool schemas + implementations)
-
 ---
 
-## Phase 4 — Panel UI (Days 4–5)
-
-### Layout (panel.html)
+## Agent Loop — background.js
 
 ```
-┌── TypingFlow Agent ──────────────────┐
-│  [text input]           [Send]        │
-├───────────────────────────────────────┤
-│  Reasoning Chain                      │
-│  ┌─ Step 1 ────────────────────────┐ │
-│  │  Tool: evaluate_expression       │ │
-│  │  Args: { expression: "..." }     │ │
-│  │  Result: 49.33              ▼    │ │
-│  └──────────────────────────────────┘ │
-│  ┌─ Step 2 ────────────────────────┐ │
-│  │  Tool: search_news               │ │
-│  │  ...                        ▼    │ │
-│  └──────────────────────────────────┘ │
-├───────────────────────────────────────┤
-│  Final Answer                         │
-│  [answer text]          [Copy]        │
-└───────────────────────────────────────┘
+onMessage({ type: "RUN_AGENT", text, prompt })
+  │
+  ├─ messages = [
+  │    { role: "user", parts: [{ text: buildSystemPrompt(text, prompt) }] }
+  │  ]
+  │
+  └─ loop (max 30 iterations):
+       POST /generateContent
+         { contents: messages, tools: [{ functionDeclarations: TOOL_SCHEMAS }] }
+       │
+       ├─ finishReason === "STOP"
+       │    → sendMessage(tab, { type: "AGENT_DONE", text: finalText })
+       │    → break
+       │
+       └─ has functionCall parts?
+            for each call:
+              result = await dispatchTool(name, args)
+              sendMessage(tab, { type: "AGENT_STEP", name, args, result })
+            append { role: "model", parts: [functionCallPart] }
+            append { role: "user",  parts: [functionResponseParts] }
+            continue loop
 ```
 
-### panel.js responsibilities
+`buildSystemPrompt` wraps the captured text and user's instruction into a single prompt that tells the model to run the four stages in order and produce a structured final report.
 
-- Listen for `chrome.runtime.onMessage` events of type `AGENT_STEP` → append a step card
-- Listen for `AGENT_DONE` → render final answer, enable Copy button
-- Copy button inserts text into the last focused text field via `content.js`
-
-### panel.css
-
-- Step cards use a left border color to distinguish tool vs. LLM commentary
-- Collapsible raw JSON section inside each card (click to expand)
-- Spinner while agent is running
+`dispatchTool(name, args)` is a switch over the four function names — local execution for `count_stats` and `chunk_text`, async execution for `summarize_chunk` and `score_chunk`.
 
 ---
 
-## Phase 5 — Integration & End-to-End Testing (Day 5–6)
+## Panel UI — panel.js / panel.html / panel.css
 
-**Scenario A — Math:** 
-Prompt: "Calculate the sum of e raised to each of the first 6 Fibonacci numbers"
-Expected: Agent calls `evaluate_expression` once, returns ≈49.33
+### Message types from background.js
 
-**Scenario B — Stock Research:**
-Prompt: "Search news about Tesla in the last 14 days and compare with its stock price movement"
-Expected: Agent calls `search_news`, then `get_stock_price`, then synthesizes a written summary linking headlines to price dates
+| Type | Payload | UI action |
+|---|---|---|
+| `AGENT_STEP` | `{ name, args, result }` | Append a new stage card to the chain |
+| `AGENT_DONE` | `{ text }` | Render final report section, enable Copy button |
+| `AGENT_ERROR` | `{ message }` | Show error banner |
 
-**Scenario C — Pure Calculation Chain:**
-Prompt: "What is (Fibonacci(10))^2 + sqrt(144)?"
-Expected: Agent may call `evaluate_expression` twice or once with a combined expression
+### Stage card structure (one per tool call)
 
-For each scenario, capture the full LLM log (request + response JSON for each hop) for submission.
+```html
+<div class="stage-card stage--done">
+  <div class="stage-header">
+    <span class="stage-icon">✓</span>
+    <span class="stage-name">score_chunk · chunk 2</span>
+    <button class="stage-toggle">▾</button>
+  </div>
+  <div class="stage-body">
+    <div class="stage-args">...</div>
+    <div class="stage-result">R:8  C:7  Co:9 — "Consider..."</div>
+  </div>
+</div>
+```
+
+### Score display
+
+Chunk scores are rendered as a small 3-column grid. The overall score in the final report is the mean across all chunks and all three dimensions, displayed as `X.X / 10`.
 
 ---
 
-## Phase 6 — Polish & Submission (Day 7)
-
-- [ ] Clip a YouTube demo video: show the panel opening, a complex query, each step card appearing, and the final answer being copied into a text field
-- [ ] Copy-paste the raw LLM logs (all request/response JSON) from the DevTools Network tab
-- [ ] Tag the release `v1.0.0` on GitHub
-- [ ] Submit video link + logs
-
----
-
-## File Inventory (target state)
+## File Inventory
 
 ```
 Gemini-typingflow-agentic/
 ├── manifest.json
-├── background.js            ← agent loop
-├── content.js               ← page injection, text field focus tracking
+├── background.js               ← agent loop, dispatchTool, Gemini fetch
+├── content.js                  ← captures active text field, relays to panel
 ├── panel/
 │   ├── panel.html
-│   ├── panel.js
+│   ├── panel.js                ← renders AGENT_STEP / AGENT_DONE events
 │   └── panel.css
-├── tools/
-│   ├── tools.js             ← barrel: exports TOOL_SCHEMAS, dispatchTool()
-│   ├── evaluate_expression.js
-│   ├── get_stock_price.js
-│   └── search_news.js
-├── icons/
-│   └── icon128.png
-├── tests/
-│   ├── evaluate_expression.test.js
-│   ├── get_stock_price.test.js
-│   └── search_news.test.js
-├── README.md
-└── DEV_PLAN.md
+└── tools/
+    ├── tools.js                ← TOOL_SCHEMAS array + dispatchTool()
+    ├── count_stats.js          ← pure local
+    ├── chunk_text.js           ← pure local
+    ├── summarize_chunk.js      ← Gemini call
+    └── score_chunk.js          ← Gemini call
 ```
+
+---
+
+## Build Phases
+
+### Phase 1 — Scaffold (Day 1)
+- Fork base typingflow repo
+- Verify extension loads with no console errors
+- Add `storage`, `scripting`, `tabs`, `activeTab` to `manifest.json`
+- Create folder structure above
+- Stub out all tool files with placeholder returns
+
+### Phase 2 — Local Tools (Day 2)
+- Implement and unit-test `count_stats` and `chunk_text`
+- Test from browser console: paste text, call function, verify output
+- Edge cases: empty string, single paragraph, single sentence, very long paragraph
+
+### Phase 3 — LLM Tools (Day 2–3)
+- Implement shared `callGemini(body)` fetch wrapper in `background.js`
+- Implement `summarize_chunk` — test with a single paragraph
+- Implement `score_chunk` — test JSON parse robustness (model sometimes wraps in markdown fences)
+- Add regex strip for ` ```json ... ``` ` fences before `JSON.parse`
+
+### Phase 4 — Agent Loop (Day 3–4)
+- Wire `dispatchTool` switch in `background.js`
+- Implement full loop with iteration cap (30) and 60 s timeout
+- Add `buildSystemPrompt` — instructs model to run stages in order
+- Test with a 3-paragraph draft: confirm all 4 tool types are called
+- Verify `messages` array grows correctly across iterations
+
+### Phase 5 — Panel UI (Day 4–5)
+- Build `panel.html` layout: input area, chain container, report section
+- Implement `AGENT_STEP` handler: append card, auto-scroll
+- Implement `AGENT_DONE` handler: render report, show scores grid
+- Copy button: `content.js` inserts final text into the original field
+- Add loading spinner that disappears on first `AGENT_STEP`
+
+### Phase 6 — End-to-End Testing (Day 5–6)
+
+**Scenario A — Short text (1 paragraph)**
+- Expected: 1 chunk, count_stats → chunk_text → 1× summarize_chunk → 1× score_chunk → report
+
+**Scenario B — Medium text (3–4 paragraphs)**
+- Expected: 3 chunks, full pipeline, overall score shown
+
+**Scenario C — Edge case: one very long paragraph (>400 words)**
+- Expected: chunk_text splits at sentence boundaries, produces 3+ chunks
+
+**Scenario D — Prompt override**
+- User types "Focus only on clarity" before clicking Run
+- Expected: LLM report emphasises clarity feedback, scores still computed for all dimensions
+
+### Phase 7 — Polish & Submission (Day 7)
+- Record YouTube demo: open panel on a real draft, show all stage cards expanding, copy final report into the text field
+- Export LLM logs (all request/response JSON from DevTools Network tab)
+- Tag `v1.0.0` and push
 
 ---
 
@@ -269,22 +355,12 @@ Gemini-typingflow-agentic/
 
 | Constraint | Decision |
 |---|---|
-| No backend server | All API calls made from background service worker using `fetch` |
-| API keys must not be in source | Stored via `chrome.storage.local`, entered once in options page |
-| No `eval()` for math | Use `mathjs` library (loaded via `importScripts` in service worker) |
-| Loop safety | Hard cap at 10 iterations; surface error if hit |
-| History fidelity | Full `messages` array passed on every Gemini call — no summarization |
-
----
-
-## Dependencies
-
-| Library | Purpose | How Loaded |
-|---|---|---|
-| [math.js](https://mathjs.org) | Safe expression evaluation | CDN script tag in panel.html + importScripts in background.js |
-| Gemini API | LLM + function calling | Direct `fetch` — no SDK needed |
-| NewsAPI.org | News search | Direct `fetch` |
-| Alpha Vantage | Stock price data | Direct `fetch` |
+| No backend server | All calls from background service worker (`fetch` bypasses page CORS) |
+| API key not in source | Stored in `chrome.storage.local` via options page |
+| No `eval()` for scoring JSON | Use regex extraction + `JSON.parse` |
+| Loop safety | Hard cap 30 iterations, 60 s wall-clock timeout |
+| `summarize_chunk` / `score_chunk` called per chunk | Agent decides how many times; system prompt instructs it to call for every chunk produced |
+| Full history on every call | `messages` array never truncated during one agent run |
 
 ---
 
@@ -292,8 +368,8 @@ Gemini-typingflow-agentic/
 
 | Risk | Mitigation |
 |---|---|
-| NewsAPI free tier rate limit | Cache results in `chrome.storage.session` keyed by query + date |
-| Alpha Vantage 5 req/min limit | Debounce tool calls; show spinner |
-| Gemini misidentifies tool args | Add strict JSON schema types + required fields to each declaration |
-| Infinite agent loop | Max 10 iterations + timeout of 60 s |
-| CORS errors on finance APIs | These calls go through background service worker (not content script), which bypasses page CORS |
+| Model skips a stage | System prompt enumerates stages explicitly; tool schemas include descriptions that hint ordering |
+| `score_chunk` returns malformed JSON | Strip markdown fences; fall back to `{ readability:0, clarity:0, coherence:0, feedback:"parse error" }` |
+| Too many chunks → too many tool calls → context overflow | Cap `chunk_text` at 8 chunks; warn user if text is very long |
+| Gemini rate limits on parallel chunk calls | Agent calls tools sequentially (one functionCall response per loop turn) — no parallelism at the API level |
+| Content script cannot read cross-origin iframes | Capture only the top-level active element; document this limitation |

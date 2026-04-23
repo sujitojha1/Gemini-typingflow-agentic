@@ -1,95 +1,156 @@
 # Gemini TypingFlow — Agentic Edition
 
-A Chrome extension that embeds a **Gemini-powered AI agent** directly into any text field on the web. Unlike a plain chat assistant, the agent autonomously breaks down complex requests into tool calls, runs them in sequence, and shows you every step of its reasoning before delivering a final answer.
+A Chrome extension that sits inside any text field and runs a **multi-stage AI agent** on whatever you are writing. The agent does not just reply — it works through your text in structured passes: counting, chunking, summarising, and scoring, then delivers a full writing report with every intermediate step visible.
 
 ---
 
-## What Makes This "Agentic"
+## The Core Idea
 
-A standard LLM call is one round-trip: you send a prompt, you get text back. An agent loop is different:
+You type. You trigger the agent. It analyses your writing through four deterministic stages before the LLM ever writes a sentence of commentary:
 
 ```
-User Prompt
-   ↓
-LLM → decides to call a tool
-   ↓
-Tool executes → result returned to LLM
-   ↓
-LLM → decides to call another tool (or finish)
-   ↓
-... repeat until LLM produces a final answer
+Your text (from the active field)
+        │
+        ▼
+ Stage 1 ── count_stats
+        │    words · sentences · paragraphs · avg sentence length · reading time
+        │
+        ▼
+ Stage 2 ── chunk_text
+        │    splits into N semantically coherent chunks
+        │
+        ▼
+ Stage 3 ── summarize_chunk  (called once per chunk)
+        │    one-sentence summary of each chunk
+        │
+        ▼
+ Stage 4 ── score_chunk  (called once per chunk)
+        │    readability · clarity · coherence scores + feedback per chunk
+        │
+        ▼
+ Stage 5 ── LLM synthesis
+             overall report · top issues · rewrite suggestions
 ```
 
-The extension renders **every hop** in the chain — which tool was called, with what arguments, and what came back — so the reasoning is auditable and not just a black box.
+Every tool call and its raw result appears in the **Reasoning Chain panel** in real time. You see exactly what the agent found before it tells you what to do about it.
 
 ---
 
-## Core Use Cases
+## Four Custom Tool Functions
 
-| Request | How the Agent Handles It |
-|---|---|
-| "Calculate the sum of exponential values of the first 6 Fibonacci numbers" | Calls `compute_fibonacci`, then `evaluate_expression`, returns verified result |
-| "Find top news about Ola stock in the last 30 days and link it to price changes" | Calls `search_news` → `get_stock_price` → `correlate_events`, narrates findings |
-| "Track AAPL and notify me when it crosses $200" | Calls `get_stock_price` on a polling interval, surfaces alert in the panel |
+### `count_stats(text)`
+Returns word count, sentence count, paragraph count, average sentence length (words), and estimated reading time. Pure local computation — no API call needed.
+
+```json
+{ "words": 312, "sentences": 21, "paragraphs": 6,
+  "avg_sentence_length": 14.9, "reading_time_sec": 75 }
+```
+
+### `chunk_text(text, max_words_per_chunk)`
+Splits the text into chunks that respect paragraph boundaries. If a paragraph exceeds `max_words_per_chunk` it is split at sentence boundaries. Returns an ordered array of chunk strings.
+
+```json
+["Chunk 1 text...", "Chunk 2 text...", "Chunk 3 text..."]
+```
+
+### `summarize_chunk(chunk)`
+Calls Gemini with a one-shot summarisation prompt scoped to a single chunk. Returns a one-sentence distillation. Called once per chunk produced by `chunk_text`.
+
+```json
+{ "summary": "Introduces the main argument about memory management in Rust." }
+```
+
+### `score_chunk(chunk)`
+Calls Gemini with a scoring prompt. Returns three integer scores (1–10) plus a short feedback string for each dimension.
+
+```json
+{
+  "readability": 7,
+  "clarity":     5,
+  "coherence":   8,
+  "feedback": "Sentence 3 introduces a new term without definition; consider a brief gloss."
+}
+```
 
 ---
 
-## Three Custom Tool Functions
+## What the Agent Loop Looks Like
 
-These are the agent's capabilities — each is a JavaScript function registered with the Gemini tool-calling API.
+The agent is a Gemini conversation where **the full message history is passed on every call**. Each tool result is appended as a `functionResponse` turn before the next Gemini request is made.
 
-### 1. `search_news(query, days_back)`
-Queries a news aggregation endpoint for headlines and summaries matching `query` over the past `days_back` days. Returns a list of `{ title, url, published_at, summary }` objects.
+```
+messages = [ { role: "user", text: prompt } ]
 
-**Why it exists:** The base LLM has a training cutoff and cannot retrieve live news. This tool bridges that gap.
+Loop:
+  POST /generateContent  (messages + tool declarations)
+  ↓
+  finishReason === "TOOL_CALLS"?
+    → execute tool → append functionCall + functionResponse to messages → repeat
+  finishReason === "STOP"?
+    → extract final text → done
+```
 
-### 2. `get_stock_price(ticker, start_date, end_date)`
-Fetches OHLCV (open/high/low/close/volume) data for a given stock ticker from a public finance API. Returns daily records over the requested range.
+Because the full history is carried forward, later stages have full context of earlier results — the LLM knows the word count when it is scoring chunks, and knows all chunk summaries when it writes the final report.
 
-**Why it exists:** Price data is live and numerical — hallucination-prone without grounding. A deterministic API call is always more accurate.
+---
 
-### 3. `evaluate_expression(expression)`
-Safely evaluates a mathematical expression string (e.g. `"e^1 + e^1 + e^2 + e^3 + e^5 + e^8"`) and returns the numeric result. Handles constants (`e`, `pi`), powers, and standard functions.
+## Reasoning Chain UI
 
-**Why it exists:** LLMs make arithmetic errors on non-trivial expressions. Offloading to a sandboxed evaluator guarantees a correct number.
+The floating panel renders each stage as a collapsible card:
+
+```
+┌── TypingFlow Agent ─────────────────────────────────┐
+│  [Analyse my draft]                        [Run]     │
+├──────────────────────────────────────────────────────┤
+│  Reasoning Chain                                      │
+│                                                       │
+│  ✓ Stage 1 · count_stats                 [expand]    │
+│    words: 312  sentences: 21  paragraphs: 6          │
+│                                                       │
+│  ✓ Stage 2 · chunk_text                  [expand]    │
+│    3 chunks produced                                  │
+│                                                       │
+│  ✓ Stage 3 · summarize_chunk × 3         [expand]    │
+│    Chunk 1: "Introduces the Rust ownership model."   │
+│    Chunk 2: "Explains borrow checker rules."         │
+│    Chunk 3: "Contrasts with GC-based languages."     │
+│                                                       │
+│  ✓ Stage 4 · score_chunk × 3             [expand]    │
+│    Chunk 1  R:7  C:5  Co:8                           │
+│    Chunk 2  R:8  C:7  Co:9                           │
+│    Chunk 3  R:6  C:6  Co:7                           │
+│                                                       │
+├──────────────────────────────────────────────────────┤
+│  Final Report                                         │
+│  Overall score 7.1/10. Clarity is the weakest area:  │
+│  chunk 1 introduces "ownership" without grounding... │
+│                                          [Copy]       │
+└──────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Architecture
 
 ```
-Chrome Extension
-├── manifest.json          — permissions, service worker, content script config
-├── background.js          — service worker: runs the agent loop, calls Gemini API
-├── content.js             — injected into every page: captures selected text, renders panel
+Gemini-typingflow-agentic/
+├── manifest.json          — permissions: storage, scripting, tabs, activeTab
+├── background.js          — service worker: agent loop, Gemini API calls
+├── content.js             — injected into pages: captures text field content, opens panel
 ├── panel/
-│   ├── panel.html         — floating side panel UI
-│   ├── panel.js           — receives agent steps, renders reasoning chain
-│   └── panel.css          — styling for step cards
+│   ├── panel.html         — floating side panel
+│   ├── panel.js           — renders reasoning chain cards, final report
+│   └── panel.css
 └── tools/
-    ├── tools.js            — tool definitions (schema + implementations)
-    ├── search_news.js      — news tool
-    ├── get_stock_price.js  — finance tool
-    └── evaluate_expression.js — math tool
+    ├── tools.js            — barrel: TOOL_SCHEMAS array + dispatchTool()
+    ├── count_stats.js
+    ├── chunk_text.js
+    ├── summarize_chunk.js  — thin Gemini call (reuses API key from storage)
+    └── score_chunk.js      — thin Gemini call
 ```
 
-### Agent Loop (background.js)
-
-```
-1. Receive user message from panel
-2. Build messages array  [ { role: "user", content: ... } ]
-3. POST to Gemini API with tool declarations
-4. If response.stopReason === "TOOL_USE":
-     a. Parse toolUse blocks
-     b. Execute matching local function
-     c. Append { role: "tool", content: result } to messages
-     d. Go to step 3
-5. If response.stopReason === "END_TURN":
-     a. Extract final text
-     b. Send full trace + answer to panel
-```
-
-All intermediate steps (tool name, args, result) are streamed to `panel.js` so the UI updates in real time.
+`count_stats` and `chunk_text` are **pure local functions** (no network).  
+`summarize_chunk` and `score_chunk` each make a single focused Gemini call — they are not recursive agent loops, just direct `generateContent` calls returning structured JSON.
 
 ---
 
@@ -98,81 +159,24 @@ All intermediate steps (tool name, args, result) are streamed to `panel.js` so t
 ### Prerequisites
 - Google Chrome 120+
 - A [Gemini API key](https://aistudio.google.com/app/apikey)
-- Node.js 18+ (for optional local dev server)
 
 ### Load the Extension
 
 ```bash
 git clone https://github.com/sujitojha1/Gemini-typingflow-agentic.git
-cd Gemini-typingflow-agentic
 ```
 
-1. Open Chrome and navigate to `chrome://extensions`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked** and select the repo folder
-4. Click the extension icon → paste your Gemini API key → Save
+1. Open `chrome://extensions` → enable **Developer mode**
+2. Click **Load unpacked** → select the repo folder
+3. Click the extension icon → enter your Gemini API key → Save
 
-### Configure API Keys (optional tools)
+### Use It
 
-Create a `.env`-style config (stored in `chrome.storage.local`, never sent anywhere except the declared APIs):
-
-| Key | Used By |
-|---|---|
-| `GEMINI_API_KEY` | All LLM calls |
-| `NEWS_API_KEY` | `search_news` tool (NewsAPI.org) |
-| `FINANCE_API_KEY` | `get_stock_price` tool (Alpha Vantage) |
-
----
-
-## Usage
-
-1. On any webpage, **select some text** or click the TypingFlow icon in the toolbar.
-2. A floating panel opens on the right side of the page.
-3. Type a complex query (e.g., "Search for TSLA news last 2 weeks and compare with its price movement").
-4. Watch the **reasoning chain** unfold — each tool call appears as a collapsible card showing:
-   - Tool name and input arguments
-   - Raw tool output
-   - LLM commentary on the result
-5. The final answer appears at the bottom with a "Copy" button to insert it back into the active text field.
-
----
-
-## Development
-
-```bash
-# Lint
-npx eslint .
-
-# Run unit tests for tools
-node --test tests/
-```
-
-After any file change, go to `chrome://extensions` and click the **refresh** icon on the extension card — no rebuild step required.
-
----
-
-## Reasoning Chain UI
-
-Each agent step is rendered as a timeline card:
-
-```
-┌─────────────────────────────────────┐
-│ 🔧  Tool: evaluate_expression        │
-│  Args: { expression: "e^1+e^1+..." } │
-│  Result: 49.33                       │
-└─────────────────────────────────────┘
-         ↓
-┌─────────────────────────────────────┐
-│ 💬  LLM Commentary                  │
-│  "The sum equals 49.33. Now I will  │
-│   search for related news..."        │
-└─────────────────────────────────────┘
-         ↓
-┌─────────────────────────────────────┐
-│  Final Answer                        │
-│  ...                                 │
-└─────────────────────────────────────┘
-```
+1. Click inside any text field on any webpage
+2. Click the TypingFlow toolbar icon — the panel slides open
+3. Type a prompt such as "Analyse this draft" or just click **Run**
+4. Watch each stage execute and collapse into a summary card
+5. Read the final report — click **Copy** to paste suggestions back into the field
 
 ---
 
