@@ -297,79 +297,134 @@ Gemini-typingflow-agentic/
 
 ## Build Phases
 
-### Phase 1 — Scaffold (Day 1)
-- Fork base typingflow repo
-- Verify extension loads with no console errors
-- Add `storage`, `scripting`, `tabs`, `activeTab` to `manifest.json`
-- Create folder structure above
-- Stub out all tool files with placeholder returns
+### Phase 1 — Scaffold `[DONE]`
 
-### Phase 2 — Local Tools (Day 2)
-- Implement and unit-test `count_stats` and `chunk_text`
-- Test from browser console: paste text, call function, verify output
-- Edge cases: empty string, single paragraph, single sentence, very long paragraph
+| Task | Status | Notes |
+|---|---|---|
+| Initialise repo from base typingflow | ✅ Done | Forked into `Gemini-typingflow-agentic` |
+| `manifest.json` with storage, scripting, tabs, activeTab | ✅ Done | All four permissions present; MV3 module service worker |
+| Folder structure: `panel/`, `tools/`, `icons/` | ✅ Done | Created and populated |
+| Stub out tool files | ✅ Done | Went straight to full implementation; no separate stub step needed |
 
-### Phase 3 — LLM Tools (Day 2–3)
-- Implement shared `callGemini(body)` fetch wrapper in `background.js`
-- Implement `summarize_chunk` — test with a single paragraph
-- Implement `score_chunk` — test JSON parse robustness (model sometimes wraps in markdown fences)
-- Add regex strip for ` ```json ... ``` ` fences before `JSON.parse`
+---
 
-### Phase 4 — Agent Loop (Day 3–4)
-- Wire `dispatchTool` switch in `background.js`
-- Implement full loop with iteration cap (30) and 60 s timeout
-- Add `buildSystemPrompt` — instructs model to run stages in order
-- Test with a 3-paragraph draft: confirm all 4 tool types are called
-- Verify `messages` array grows correctly across iterations
+### Phase 2 — Local Tools `[DONE]`
 
-### Phase 5 — Panel UI (Day 4–5)
-- Build `panel.html` layout: input area, chain container, report section
-- Implement `AGENT_STEP` handler: append card, auto-scroll
-- Implement `AGENT_DONE` handler: render report, show scores grid
-- Copy button: `content.js` inserts final text into the original field
-- Add loading spinner that disappears on first `AGENT_STEP`
+| Task | Status | Notes |
+|---|---|---|
+| Implement `count_stats` | ✅ Done | `tools/count_stats.js` — pure JS, no network call |
+| Implement `chunk_text` | ✅ Done | `tools/chunk_text.js` — paragraph-first, sentence fallback, 8-chunk cap |
+| Edge case: empty string | ✅ Done | Falls through to `text.trim()` push; returns `{ chunks: [''] }` |
+| Edge case: single paragraph | ✅ Done | Fits within max_words → single-element array |
+| Edge case: very long paragraph | ✅ Done | Sentence-boundary splitting activated when wordCount > max_words |
+| Unit tests in `tests/` | ❌ Pending | No test files created yet — needed before Phase 6 |
 
-### Phase 6 — End-to-End Testing (Day 5–6)
+---
 
-**Scenario A — Short text (1 paragraph)**
-- Expected: 1 chunk, count_stats → chunk_text → 1× summarize_chunk → 1× score_chunk → report
+### Phase 3 — LLM Tools `[DONE]`
 
-**Scenario B — Medium text (3–4 paragraphs)**
-- Expected: 3 chunks, full pipeline, overall score shown
+| Task | Status | Notes |
+|---|---|---|
+| `summarize_chunk` with Gemini call | ✅ Done | `tools/summarize_chunk.js`; direct fetch, 100-token cap, temp 0.2 |
+| `score_chunk` with structured JSON output | ✅ Done | `tools/score_chunk.js`; temp 0.1 for determinism |
+| Markdown fence strip before `JSON.parse` | ✅ Done | Regex strips ` ```json ``` ` fences before parsing |
+| Fallback for malformed JSON | ✅ Done | Returns `{ readability:0, clarity:0, coherence:0, feedback:'Score parse error.' }` |
+| Shared `callGemini` wrapper | ⚠️ Deviated | Each LLM tool owns its own `fetch` call instead. Simpler; no functional gap. |
 
-**Scenario C — Edge case: one very long paragraph (>400 words)**
-- Expected: chunk_text splits at sentence boundaries, produces 3+ chunks
+---
 
-**Scenario D — Prompt override**
-- User types "Focus only on clarity" before clicking Run
-- Expected: LLM report emphasises clarity feedback, scores still computed for all dimensions
+### Phase 4 — Agent Loop `[DONE]`
 
-### Phase 7 — Polish & Submission (Day 7)
-- Record YouTube demo: open panel on a real draft, show all stage cards expanding, copy final report into the text field
-- Export LLM logs (all request/response JSON from DevTools Network tab)
-- Tag `v1.0.0` and push
+| Task | Status | Notes |
+|---|---|---|
+| `dispatchTool` switch in `tools/tools.js` | ✅ Done | Routes to all four tool functions; passes `apiKey` to LLM tools |
+| Full loop with iteration cap | ✅ Done | `MAX_ITERATIONS = 30` |
+| Wall-clock timeout | ✅ Done | `TIMEOUT_MS = 120 000 ms` (2 min) — planned was 60 s; doubled for safety |
+| `buildSystemPrompt` with stage ordering | ✅ Done | Enumerates all 5 stages explicitly; handles empty-text case |
+| Full `messages` history on every call | ✅ Done | Array appends model turn + user functionResponse turn each iteration |
+| Multiple function calls per turn handled | ✅ Done | `fnCallParts` loop executes all calls before appending responses |
+| Dynamic tool injection on action click | ✅ Done | `chrome.scripting.executeScript` injects content.js if not yet loaded |
+
+---
+
+### Phase 5 — Panel UI `[DONE]`
+
+| Task | Status | Notes |
+|---|---|---|
+| `panel.html` — setup view (API key entry) | ✅ Done | Password input + Save button + link to AI Studio |
+| `panel.html` — main view layout | ✅ Done | Field preview, word-count badge, prompt input, chain, report |
+| `AGENT_STEP` handler — append card, auto-scroll | ✅ Done | `onStep()` in `panel.js`; `scrollIntoView` on each new card |
+| `AGENT_DONE` handler — render report | ✅ Done | `onDone()` with minimal Markdown renderer |
+| `AGENT_ERROR` handler — error banner | ✅ Done | `onError()` renders `.error-card` in the chain |
+| Copy button → inserts into active field | ✅ Done | `COPY_TEXT` postMessage → `content.js` → `insertIntoField()` |
+| Spinner — disappears on first `AGENT_STEP` | ✅ Done | Hidden in `onStep()` before card is appended |
+| Score grid for `score_chunk` cards | ✅ Done | 3-column CSS grid; colour-coded (green ≥7, amber ≥4, red <4) |
+| Collapsible card expand/collapse | ✅ Done | Toggle button shows/hides `.step-body` |
+| Args truncated in card detail view | ✅ Done | `text` and `chunk` fields capped at 120 chars for readability |
+| Settings button to re-enter API key | ✅ Done | Shows setup view on click |
+| Refresh button to re-capture field text | ✅ Done | Sends `GET_FIELD_TEXT` postMessage |
+
+---
+
+### Phase 6 — End-to-End Testing `[PENDING]`
+
+| Scenario | Status | Expected behaviour |
+|---|---|---|
+| A — Short text (1 paragraph) | ❌ Not tested | 1 chunk → count_stats → chunk_text → 1× summarize + score → report |
+| B — Medium text (3–4 paragraphs) | ❌ Not tested | 3–4 chunks → full pipeline → overall score in report |
+| C — Very long single paragraph (>400 words) | ❌ Not tested | chunk_text sentence-splits → 3+ chunks produced |
+| D — Prompt override ("Focus only on clarity") | ❌ Not tested | All tool calls still run; LLM report emphasises clarity findings |
+| E — No text captured (empty field) | ❌ Not tested | System prompt triggers "no text" branch; model asks user to paste |
+| F — Invalid/expired API key | ❌ Not tested | Gemini returns 400/403; `AGENT_ERROR` shown with status code |
+
+**Action required before Phase 7:** run all six scenarios manually in Chrome and note any failures.
+
+---
+
+### Phase 7 — Polish & Submission `[PENDING]`
+
+| Task | Status | Notes |
+|---|---|---|
+| YouTube demo video | ❌ Not started | Show panel open, complex query, each stage card, copy to field |
+| Export raw LLM logs | ❌ Not started | DevTools → Network → copy request+response JSON for each Gemini call |
+| Tag `v1.0.0` and push | ❌ Not started | `git tag v1.0.0 && git push origin v1.0.0` |
+| Write unit tests (`tests/`) | ❌ Not started | At minimum: `count_stats` and `chunk_text` edge cases |
+
+---
+
+## Implementation Deviations from Original Plan
+
+| Item | Planned | Actual | Impact |
+|---|---|---|---|
+| Wall-clock timeout | 60 s | 120 s | Beneficial — gives model more time on longer texts |
+| Shared `callGemini` wrapper | Single helper function | Each LLM tool has its own `fetch` | Neutral — slightly more verbose but each tool is fully self-contained |
+| API key UI | Separate options page | Inline setup view in panel | Simpler UX — no separate options tab needed |
+| Empty-paragraph handling in chunk_text | Not specified | Single-paragraph fallback added | Prevents empty `chunks` array on single-block text |
 
 ---
 
 ## Key Constraints
 
-| Constraint | Decision |
-|---|---|
-| No backend server | All calls from background service worker (`fetch` bypasses page CORS) |
-| API key not in source | Stored in `chrome.storage.local` via options page |
-| No `eval()` for scoring JSON | Use regex extraction + `JSON.parse` |
-| Loop safety | Hard cap 30 iterations, 60 s wall-clock timeout |
-| `summarize_chunk` / `score_chunk` called per chunk | Agent decides how many times; system prompt instructs it to call for every chunk produced |
-| Full history on every call | `messages` array never truncated during one agent run |
+| Constraint | Decision | Status |
+|---|---|---|
+| No backend server | All calls from background service worker (`fetch` bypasses page CORS) | ✅ Implemented |
+| API key not in source | Stored in `chrome.storage.local` via inline setup view | ✅ Implemented |
+| No `eval()` for scoring JSON | Use regex extraction + `JSON.parse` | ✅ Implemented |
+| Loop safety | Hard cap 30 iterations, 120 s wall-clock timeout | ✅ Implemented |
+| `summarize_chunk` / `score_chunk` called per chunk | Agent decides; system prompt instructs call for every chunk | ✅ Implemented |
+| Full history on every call | `messages` array never truncated during one agent run | ✅ Implemented |
+| Cross-origin iframe limitation | Capture only top-level active element; documented | ✅ Documented, not yet surfaced in UI |
 
 ---
 
 ## Risk & Mitigations
 
-| Risk | Mitigation |
-|---|---|
-| Model skips a stage | System prompt enumerates stages explicitly; tool schemas include descriptions that hint ordering |
-| `score_chunk` returns malformed JSON | Strip markdown fences; fall back to `{ readability:0, clarity:0, coherence:0, feedback:"parse error" }` |
-| Too many chunks → too many tool calls → context overflow | Cap `chunk_text` at 8 chunks; warn user if text is very long |
-| Gemini rate limits on parallel chunk calls | Agent calls tools sequentially (one functionCall response per loop turn) — no parallelism at the API level |
-| Content script cannot read cross-origin iframes | Capture only the top-level active element; document this limitation |
+| Risk | Mitigation | Status |
+|---|---|---|
+| Model skips a stage | System prompt enumerates stages explicitly with numbered steps | ✅ Mitigated |
+| `score_chunk` returns malformed JSON | Strip markdown fences; structured fallback object | ✅ Mitigated |
+| Too many chunks → context overflow | `chunk_text` capped at 8 chunks | ✅ Mitigated |
+| Gemini rate limits | Sequential tool calls (one function call response per loop turn) | ✅ Mitigated |
+| Content script not yet loaded on first action click | `chrome.scripting.executeScript` injects content.js on demand | ✅ Mitigated |
+| Empty text field on run | System prompt has explicit empty-text branch; model asks user to paste | ✅ Mitigated |
+| No unit tests | `count_stats` and `chunk_text` are pure functions — easy to test | ❌ Tests not written yet |
