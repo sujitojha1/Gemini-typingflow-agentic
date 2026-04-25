@@ -62,9 +62,9 @@ async function runAgentLoop(text, userPrompt, tabId) {
 
     let response;
     try {
-      response = await fetch(`${GEMINI_URL}?key=${geminiApiKey}`, {
+      response = await fetch(GEMINI_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
         body: JSON.stringify({
           contents: messages,
           tools: [{ functionDeclarations: TOOL_SCHEMAS }],

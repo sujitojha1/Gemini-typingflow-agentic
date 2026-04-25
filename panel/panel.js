@@ -75,6 +75,13 @@ function updatePreview(text) {
 // ─── Agent controls ───────────────────────────────────────────────────────────
 
 function runAgent() {
+  if (!capturedText.trim()) {
+    const box = $('field-preview');
+    box.textContent = 'No text captured — focus a text field on the page and click ↻ first.';
+    box.style.color = 'var(--red, #dc2626)';
+    setTimeout(() => { box.style.color = ''; updatePreview(capturedText); }, 3000);
+    return;
+  }
   const prompt = $('prompt-input').value.trim() || 'Analyse my writing and give a full report.';
   resetUI(false);
   $('chain-section').classList.remove('hidden');
@@ -97,9 +104,15 @@ function resetUI(full = true) {
 function copyReport() {
   const text = $('report-body').innerText;
   window.parent.postMessage({ type: 'COPY_TEXT', text }, '*');
-  navigator.clipboard.writeText(text).catch(() => {});
-  $('copy-btn').textContent = '✓ Copied';
-  setTimeout(() => { $('copy-btn').textContent = 'Copy report'; }, 2000);
+  navigator.clipboard.writeText(text)
+    .then(() => {
+      $('copy-btn').textContent = '✓ Copied';
+      setTimeout(() => { $('copy-btn').textContent = 'Copy report'; }, 2000);
+    })
+    .catch(() => {
+      $('copy-btn').textContent = 'Copy failed — try again';
+      setTimeout(() => { $('copy-btn').textContent = 'Copy report'; }, 2500);
+    });
 }
 
 // ─── Incoming messages from content.js ───────────────────────────────────────
@@ -162,8 +175,10 @@ function buildSummary(name, result) {
   switch (name) {
     case 'count_stats':
       return `${result.word_count ?? '?'} words · ${result.sentence_count ?? '?'} sentences · ${result.paragraph_count ?? '?'} paragraphs`;
-    case 'chunk_text':
-      return `${result.chunks?.length ?? 0} chunk${result.chunks?.length !== 1 ? 's' : ''} produced`;
+    case 'chunk_text': {
+      const n = result.chunks?.length ?? 0;
+      return `${n} chunk${n !== 1 ? 's' : ''} produced`;
+    }
     case 'summarize_chunk':
       return (result.summary || '').slice(0, 72) + ((result.summary || '').length > 72 ? '…' : '');
     case 'score_chunk': {

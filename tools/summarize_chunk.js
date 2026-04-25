@@ -15,14 +15,25 @@ export const SUMMARIZE_CHUNK_SCHEMA = {
 
 export async function summarize_chunk({ chunk }, apiKey) {
   const prompt = `Summarise the following passage in exactly one concise sentence:\n\n${chunk}`;
-  const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 100, temperature: 0.2 }
-    })
-  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+
+  let res;
+  try {
+    res = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 100, temperature: 0.2 }
+      })
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (!res.ok) throw new Error(`Gemini error ${res.status}`);
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';

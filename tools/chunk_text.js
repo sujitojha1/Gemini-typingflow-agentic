@@ -12,6 +12,7 @@ export const CHUNK_TEXT_SCHEMA = {
 };
 
 export function chunk_text({ text, max_words = 120 }) {
+  const limit = Math.max(1, Number(max_words) || 120);
   const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
   if (paragraphs.length === 0) paragraphs.push(text.trim());
 
@@ -19,16 +20,16 @@ export function chunk_text({ text, max_words = 120 }) {
 
   for (const para of paragraphs) {
     const wordCount = para.split(/\s+/).filter(Boolean).length;
-    if (wordCount <= max_words) {
+    if (wordCount <= limit) {
       chunks.push(para);
     } else {
-      // Split oversized paragraph at sentence boundaries
-      const sentences = para.split(/(?<=[.!?])\s+/);
+      // Split at sentence boundaries; require uppercase start to avoid splitting abbreviations
+      const sentences = para.split(/(?<=[.!?])\s+(?=[A-Z])/);
       let current = [];
       let currentLen = 0;
       for (const sent of sentences) {
         const len = sent.split(/\s+/).filter(Boolean).length;
-        if (currentLen + len > max_words && current.length > 0) {
+        if (currentLen + len > limit && current.length > 0) {
           chunks.push(current.join(' '));
           current = [];
           currentLen = 0;

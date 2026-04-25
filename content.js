@@ -1,6 +1,8 @@
 // Injected into every page. Manages the panel iframe and relays messages
 // between the panel (chrome-extension iframe) and background service worker.
 
+const PANEL_ORIGIN = new URL(chrome.runtime.getURL('/')).origin;
+
 let panelFrame   = null;
 let panelVisible = false;
 let lastFocusedField = null;
@@ -35,6 +37,7 @@ function insertIntoField(text) {
     lastFocusedField.dispatchEvent(new Event('input', { bubbles: true }));
   } else if (lastFocusedField.isContentEditable) {
     lastFocusedField.innerText = text;
+    lastFocusedField.dispatchEvent(new Event('input', { bubbles: true }));
   }
 }
 
@@ -48,7 +51,7 @@ function createPanel() {
     position:   'fixed',
     top:        '0',
     right:      '0',
-    width:      '400px',
+    width:      'min(400px, 38vw)',
     height:     '100vh',
     border:     'none',
     zIndex:     '2147483647',
@@ -72,7 +75,7 @@ function togglePanel() {
 
 function forwardToPanel(msg) {
   if (panelFrame?.contentWindow) {
-    panelFrame.contentWindow.postMessage(msg, '*');
+    panelFrame.contentWindow.postMessage(msg, PANEL_ORIGIN);
   }
 }
 
@@ -94,7 +97,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 // ─── Messages from panel iframe → handle or relay to background ───────────────
 
 window.addEventListener('message', (e) => {
-  if (e.source !== panelFrame?.contentWindow) return;
+  if (!panelFrame || e.source !== panelFrame.contentWindow) return;
   const msg = e.data;
   if (!msg?.type) return;
 
