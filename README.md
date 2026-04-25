@@ -327,6 +327,6 @@ All contributions welcome — new tools, UI improvements, test coverage, docs.
 
 <div align="center">
 
-Built with ❤️ and [Gemini 2.0 Flash](https://ai.google.dev/) &nbsp;·&nbsp; MIT License
+Built with ❤️ and [Gemini 2.0 Flash](https://ai.google.dev/) &nbsp;·&nbsp; Apache2.0 License
 
 </div>
