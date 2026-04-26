@@ -97,6 +97,6 @@ git clone https://github.com/sujitojha1/Gemini-typingflow-agentic.git
 
 <div align="center">
 
-MIT License · Built with [Gemini 2.0 Flash](https://ai.google.dev/)
+Apache License · 
 
 </div>
