@@ -16,6 +16,9 @@ export const SCORE_CHUNK_SCHEMA = {
 const clamp = (n) => Math.min(10, Math.max(0, Number(n) || 0));
 
 export async function score_chunk({ chunk }, apiKey) {
+  // Rate limiting delay (4 seconds)
+  await new Promise(r => setTimeout(r, 4000));
+
   const prompt = `Score the following passage on three dimensions, each 1 (poor) to 10 (excellent).
 Return ONLY valid JSON — no markdown, no explanation:
 { "readability": number, "clarity": number, "coherence": number, "feedback": "one sentence" }

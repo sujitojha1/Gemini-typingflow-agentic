@@ -14,6 +14,9 @@ export const SUMMARIZE_CHUNK_SCHEMA = {
 };
 
 export async function summarize_chunk({ chunk }, apiKey) {
+  // Rate limiting delay (4 seconds)
+  await new Promise(r => setTimeout(r, 4000));
+
   const prompt = `Summarise the following passage in exactly one concise sentence:\n\n${chunk}`;
 
   const controller = new AbortController();

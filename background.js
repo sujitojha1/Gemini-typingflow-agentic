@@ -60,6 +60,9 @@ async function runAgentLoop(text, userPrompt, tabId) {
     }
     iterations++;
 
+    // Add a delay to respect free tier rate limits (15 RPM -> 4s per request)
+    await new Promise(r => setTimeout(r, 4000));
+
     let response;
     try {
       response = await fetch(GEMINI_URL, {
