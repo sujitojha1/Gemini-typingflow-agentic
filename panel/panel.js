@@ -89,7 +89,16 @@ function saveKey() {
 // ─── Field text ───────────────────────────────────────────────────────────────
 
 function requestFieldText() {
-  window.parent.postMessage({ type: 'GET_FIELD_TEXT' }, '*');
+  chrome.tabs.query({active: true, currentWindow: true}, tabs => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FIELD_TEXT' }, resp => {
+        if (resp && resp.text) {
+          updateWordBadge(resp.text);
+          if (pendingTyping) startTypingWithText(resp.text);
+        }
+      });
+    }
+  });
 }
 
 function updateWordBadge(text) {
@@ -117,8 +126,16 @@ function runAgent() {
   $('run-btn').disabled    = true;
   $('run-btn').textContent = '⏳ Analysing…';
 
-  // Empty text → content.js calls getFieldText() to grab full page content
-  window.parent.postMessage({ type: 'RUN_AGENT', text: '', prompt }, '*');
+  chrome.tabs.query({active: true, currentWindow: true}, tabs => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FIELD_TEXT' }, resp => {
+        const text = resp && resp.text ? resp.text : '';
+        chrome.runtime.sendMessage({ type: 'RUN_AGENT', text, prompt });
+      });
+    } else {
+      chrome.runtime.sendMessage({ type: 'RUN_AGENT', text: '', prompt });
+    }
+  });
 }
 
 function resetUI(full = true) {
@@ -138,7 +155,6 @@ function resetUI(full = true) {
 
 function copyReport() {
   const text = $('report-body').innerText;
-  window.parent.postMessage({ type: 'COPY_TEXT', text }, '*');
   navigator.clipboard.writeText(text)
     .then(() => {
       $('copy-btn').textContent = '✓ Copied';
@@ -172,14 +188,9 @@ function updatePipeline(name) {
 
 // ─── Incoming messages ────────────────────────────────────────────────────────
 
-window.addEventListener('message', (e) => {
-  const msg = e.data;
+chrome.runtime.onMessage.addListener((msg) => {
   if (!msg?.type) return;
   switch (msg.type) {
-    case 'FIELD_TEXT':
-      updateWordBadge(msg.text);
-      if (pendingTyping) startTypingWithText(msg.text);
-      break;
     case 'AGENT_STEP':  onStep(msg);          break;
     case 'AGENT_DONE':  onDone(msg.text);     break;
     case 'AGENT_ERROR': onError(msg.message); break;
@@ -465,7 +476,6 @@ function setTypingBtnError(msg) {
 }
 
 function startTyping() {
-  window.parent.postMessage({ type: 'TYPING_START' }, '*');
   typingIdx         = 0;
   sessionStart      = Date.now();
   sessionTotalChars = 0;
@@ -572,7 +582,6 @@ function showComplete() {
 }
 
 function closeTypingSession() {
-  window.parent.postMessage({ type: 'TYPING_END' }, '*');
   clearInterval(statsTimer);
   typingChunks = [];
   $('t-body').classList.remove('hidden');
