@@ -1,7 +1,4 @@
-import { TOOL_SCHEMAS, dispatchTool } from './tools/tools.js';
-
-const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent';
+import { TOOL_SCHEMAS, dispatchTool, getNextModelUrl } from './tools/tools.js';
 
 const MAX_ITERATIONS = 30;
 const TIMEOUT_MS     = 120_000;
@@ -60,12 +57,9 @@ async function runAgentLoop(text, userPrompt, tabId) {
     }
     iterations++;
 
-    // Add a delay to respect free tier rate limits (15 RPM -> 4s per request)
-    await new Promise(r => setTimeout(r, 4000));
-
     let response;
     try {
-      response = await fetch(GEMINI_URL, {
+      response = await fetch(getNextModelUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey },
         body: JSON.stringify({
@@ -141,15 +135,14 @@ Analyse the user's text by following these stages IN ORDER:
 
 Stage 1 — call count_stats with the FULL text to get baseline statistics.
 Stage 2 — call chunk_text with the FULL text (max_words=120) to split it into chunks.
-Stage 3 — for EACH chunk returned by chunk_text, call summarize_chunk once.
-Stage 4 — for EACH chunk returned by chunk_text, call score_chunk once.
-Stage 5 — after ALL chunks have been summarised and scored, write the final report:
+Stage 3 — for EACH chunk returned by chunk_text, call analyze_chunk once.
+Stage 4 — after ALL chunks have been analysed, write the final report:
   • Overall score: mean of all chunk scores across all three dimensions, shown as X.X / 10
   • Top 3 specific issues ranked by severity
   • 2–3 concrete rewrite suggestions with brief before/after examples
 
 Rules:
-- Do not skip any chunk in stages 3 and 4.
+- Do not skip any chunk in stage 3.
 - Do not write the final report until every tool call for every chunk is complete.
 - In the final report, use clear Markdown headings and bullet points.
 

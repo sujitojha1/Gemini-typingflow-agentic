@@ -143,7 +143,7 @@ function copyReport() {
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
-const PIPE_ORDER = ['count_stats', 'chunk_text', 'summarize_chunk', 'score_chunk', 'done'];
+const PIPE_ORDER = ['count_stats', 'chunk_text', 'analyze_chunk', 'done'];
 
 function resetPipeline() {
   PIPE_ORDER.forEach(n => setPipelineStep(n, 'idle'));
@@ -182,8 +182,7 @@ window.addEventListener('message', (e) => {
 const TOOL_META = {
   count_stats:     { icon: '📊', label: 'count_stats',     css: 'count-stats' },
   chunk_text:      { icon: '✂️',  label: 'chunk_text',      css: 'chunk-text' },
-  summarize_chunk: { icon: '📝', label: 'summarize_chunk', css: 'summarize-chunk' },
-  score_chunk:     { icon: '⭐', label: 'score_chunk',     css: 'score-chunk' }
+  analyze_chunk:   { icon: '🧠', label: 'analyze_chunk',   css: 'analyze-chunk' }
 };
 
 function onStep({ name, args, result }) {
@@ -230,11 +229,10 @@ function buildSummary(name, result) {
       const n = result.chunks?.length ?? 0;
       return `${n} chunk${n !== 1 ? 's' : ''} produced`;
     }
-    case 'summarize_chunk':
-      return (result.summary || '').slice(0, 72) + ((result.summary || '').length > 72 ? '…' : '');
-    case 'score_chunk': {
+    case 'analyze_chunk': {
+      const sum = (result.summary || '').slice(0, 40) + ((result.summary || '').length > 40 ? '…' : '');
       const { readability: r = 0, clarity: c = 0, coherence: co = 0 } = result;
-      return `R:${r}  C:${c}  Co:${co}  avg:${((r + c + co) / 3).toFixed(1)}`;
+      return `${sum} | R:${r} C:${c} Co:${co}`;
     }
     default: return '';
   }
@@ -244,11 +242,13 @@ function buildDetailHtml(name, args, result) {
   const safeArgs   = sanitiseArgs(args);
   const argsJson   = JSON.stringify(safeArgs, null, 2);
 
-  if (name === 'score_chunk' && result && !result.error) {
-    const { readability: r = 0, clarity: c = 0, coherence: co = 0, feedback = '' } = result;
+  if (name === 'analyze_chunk' && result && !result.error) {
+    const { summary = '', readability: r = 0, clarity: c = 0, coherence: co = 0, feedback = '' } = result;
     return `
       <div class="step-sub-label">Args</div>
       <pre class="step-json">${esc(argsJson)}</pre>
+      <div class="step-sub-label">Summary</div>
+      <div class="score-feedback">"${esc(summary)}"</div>
       <div class="step-sub-label">Scores</div>
       <div class="score-grid">
         ${scorePill('Readability', r)}
