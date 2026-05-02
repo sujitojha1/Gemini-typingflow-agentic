@@ -109,7 +109,7 @@
       </div>
 
       <!-- Active typing challenge -->
-      <div id="t-body" class="t-body">
+      <div id="t-body" class="t-body" style="display: flex; flex-direction: column; height: calc(100vh - 40px); padding: 24px; box-sizing: border-box;">
         <div class="t-progress-row">
           <span id="t-chunk-num" class="t-chunk-num">1 / 1</span>
           <div class="t-nav">
@@ -118,13 +118,18 @@
           </div>
         </div>
 
-        <div id="t-target" class="t-target"></div>
+        <div style="display: flex; flex: 1; gap: 32px; overflow: hidden; margin-top: 16px;">
+          <div id="t-image-container" style="flex: 0 0 35%; display: flex; align-items: center; justify-content: center; background: transparent; border-radius: 8px; overflow: hidden;">
+            <img id="t-context-image" src="" style="width: 100%; height: 100%; object-fit: cover; display: none; border-radius: 8px;">
+          </div>
+          <div id="t-target" class="t-target" style="flex: 1; overflow-y: auto;"></div>
+        </div>
 
         <!-- Hidden input captures keystrokes -->
         <input id="t-input" type="text" class="t-input-hidden"
           autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
 
-        <div class="t-statsrow">
+        <div class="t-statsrow" style="margin-top: 24px;">
           <div class="t-stat"><div id="t-wpm"  class="t-val">0</div><div class="t-label">wpm</div></div>
           <div class="t-stat"><div id="t-acc"  class="t-val">—</div><div class="t-label">acc</div></div>
           <div class="t-stat"><div id="t-time" class="t-val">0s</div><div class="t-label">time</div></div>

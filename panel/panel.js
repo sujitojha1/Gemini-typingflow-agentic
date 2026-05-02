@@ -3,6 +3,7 @@
 let capturedWordCount = 0;
 let typingChunks      = [];   // set from chunk_text tool result or local extract
 let pendingTyping     = false;
+let sessionImage      = '';
 let analyzeCardNode   = null;
 let analyzeCount      = 0;
 let chunkCardNode     = null;
@@ -199,6 +200,10 @@ function onStep({ name, args, result }) {
   updatePipeline(name);
 
   const meta    = TOOL_META[name] || { icon: '🔧', label: name, css: 'unknown' };
+
+  if (name === 'generate_image' && result && result.image_base64) {
+    sessionImage = result.image_base64;
+  }
 
   if (name === 'chunk_text') {
     chunkCount++;
@@ -399,9 +404,14 @@ function onDone(text) {
   $('run-btn').disabled    = false;
   $('run-btn').textContent = 'Process Page Intelligence';
   PIPE_ORDER.forEach(s => setPipelineStep(s, 'done'));
-  $('report-body').innerHTML = renderMarkdown(text || '(No report returned.)');
-  $('report-section').classList.remove('hidden');
-  $('report-section').scrollIntoView({ behavior: 'smooth' });
+  
+  if (typingChunks.length > 0) {
+    openTypingSession();
+  } else {
+    $('report-body').innerHTML = renderMarkdown(text || '(No report returned.)');
+    $('report-section').classList.remove('hidden');
+    $('report-section').scrollIntoView({ behavior: 'smooth' });
+  }
 }
 
 function onError(message) {
@@ -477,6 +487,14 @@ function renderChunk() {
   $('t-target').innerHTML = text.split('').map((ch, i) =>
     `<span class="tc" data-i="${i}">${ch === ' ' ? ' ' : esc(ch)}</span>`
   ).join('');
+
+  const imgEl = $('t-context-image');
+  if (imgEl && sessionImage) {
+    imgEl.src = sessionImage;
+    imgEl.style.display = 'block';
+  } else if (imgEl) {
+    imgEl.style.display = 'none';
+  }
 
   // Set cursor on first char
   const first = $('t-target').querySelector('.tc');

@@ -12,7 +12,7 @@ export const GENERATE_IMAGE_SCHEMA = {
 
 export async function generate_image({ prompt }) {
   try {
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=800&height=400&nologo=true`;
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=400&height=400&nologo=true`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const blob = await res.blob();
