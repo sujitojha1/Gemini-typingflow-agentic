@@ -5,6 +5,8 @@ let typingChunks      = [];   // set from chunk_text tool result or local extrac
 let pendingTyping     = false;
 let analyzeCardNode   = null;
 let analyzeCount      = 0;
+let chunkCardNode     = null;
+let chunkCount        = 0;
 
 // ─── Typing session state ─────────────────────────────────────────────────────
 
@@ -128,6 +130,8 @@ function resetUI(full = true) {
   $('run-btn').textContent = 'Process Page Intelligence';
   analyzeCardNode = null;
   analyzeCount = 0;
+  chunkCardNode = null;
+  chunkCount = 0;
   resetPipeline();
 }
 
@@ -147,7 +151,7 @@ function copyReport() {
 
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
-const PIPE_ORDER = ['count_stats', 'chunk_text', 'analyze_chunk', 'done'];
+const PIPE_ORDER = ['count_stats', 'chunk_text', 'analyze_chunk', 'generate_image', 'done'];
 
 function resetPipeline() {
   PIPE_ORDER.forEach(n => setPipelineStep(n, 'idle'));
@@ -186,19 +190,63 @@ window.addEventListener('message', (e) => {
 const TOOL_META = {
   count_stats:     { icon: '📊', label: 'count_stats',     css: 'count-stats' },
   chunk_text:      { icon: '✂️',  label: 'chunk_text',      css: 'chunk-text' },
-  analyze_chunk:   { icon: '🧠', label: 'analyze_chunk',   css: 'analyze-chunk' }
+  analyze_chunk:   { icon: '🧠', label: 'analyze_chunk',   css: 'analyze-chunk' },
+  generate_image:  { icon: '🖼️', label: 'generate_image',  css: 'generate-image' }
 };
 
 function onStep({ name, args, result }) {
   $('spinner').classList.add('hidden');
   updatePipeline(name);
 
-  // Store chunks from chunk_text for typing session
-  if (name === 'chunk_text' && result?.chunks?.length) {
-    typingChunks = result.chunks;
-  }
-
   const meta    = TOOL_META[name] || { icon: '🔧', label: name, css: 'unknown' };
+
+  if (name === 'chunk_text') {
+    chunkCount++;
+    typingChunks = result?.chunks || [];
+    analyzeCount = 0;
+    analyzeCardNode = null;
+    
+    if (!chunkCardNode) {
+      chunkCardNode = document.createElement('div');
+      chunkCardNode.className = `step-card step-${meta.css}`;
+      chunkCardNode.innerHTML = `
+        <div class="step-header t-topbar" style="border-radius: 8px; padding: 8px 12px; cursor: pointer; display: flex; align-items: center; border-bottom: none;">
+          <div style="display: flex; gap: 6px; margin-right: 12px;">
+            <div class="t-dot" style="background:#ED655A; width: 10px; height: 10px; border-radius: 50%;"></div>
+            <div class="t-dot" style="background:#E1C04C; width: 10px; height: 10px; border-radius: 50%;"></div>
+            <div class="t-dot" style="background:#72BE47; width: 10px; height: 10px; border-radius: 50%;"></div>
+          </div>
+          <span class="step-icon">${meta.icon}</span>
+          <span class="step-name" style="flex:1; margin-left: 8px; color: var(--text);">chunk_text</span>
+          <span class="step-summary" id="chunk-summary-text" style="margin-right: 12px;">${typingChunks.length} chunks</span>
+          <button class="step-toggle" aria-label="Toggle details" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">▾</button>
+        </div>
+        <div class="step-body hidden" id="chunk-body-container" style="padding-top: 12px;"></div>
+      `;
+
+      chunkCardNode.querySelector('.step-header').addEventListener('click', () => {
+        const body = chunkCardNode.querySelector('.step-body');
+        const btn  = chunkCardNode.querySelector('.step-toggle');
+        body.classList.toggle('hidden');
+        btn.textContent = body.classList.contains('hidden') ? '▾' : '▴';
+      });
+
+      $('steps-container').appendChild(chunkCardNode);
+    } else {
+      const summaryEl = chunkCardNode.querySelector('#chunk-summary-text');
+      if (summaryEl) summaryEl.textContent = `${typingChunks.length} chunks (run ${chunkCount})`;
+    }
+
+    const detailHtml = buildDetailHtml(name, args, result);
+    const chunkBlock = document.createElement('div');
+    chunkBlock.style.borderTop = '1px solid #333';
+    chunkBlock.style.marginTop = '12px';
+    chunkBlock.style.paddingTop = '12px';
+    chunkBlock.innerHTML = `<div style="font-weight: 600; margin-bottom: 8px; color: #888;">Run ${chunkCount}</div>${detailHtml}`;
+    chunkCardNode.querySelector('#chunk-body-container').appendChild(chunkBlock);
+    chunkCardNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
 
   if (name === 'analyze_chunk') {
     analyzeCount++;
@@ -293,6 +341,8 @@ function buildSummary(name, result) {
       const { readability: r = 0, clarity: c = 0, coherence: co = 0 } = result;
       return `${sum} | R:${r} C:${c} Co:${co}`;
     }
+    case 'generate_image':
+      return result.image_base64 ? 'Image generated successfully' : 'Failed to generate image';
     default: return '';
   }
 }

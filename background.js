@@ -135,15 +135,16 @@ Analyse the user's text by following these stages IN ORDER:
 
 Stage 1 — call count_stats with the FULL text to get baseline statistics.
 Stage 2 — call chunk_text with the FULL text (max_words=120) to split it into chunks.
-Stage 3 — for EACH chunk returned by chunk_text, call analyze_chunk once.
-Stage 4 — after ALL chunks have been analysed, write the final report:
+Stage 3 — for EACH chunk returned by chunk_text, call analyze_chunk exactly ONCE. Do not retry if a chunk fails.
+Stage 4 — call generate_image ONCE with a descriptive visual prompt representing the article's theme.
+Stage 5 — write the final report, including the image as an HTML <img> tag with the returned base64 data URI at the top.
   • Overall score: mean of all chunk scores across all three dimensions, shown as X.X / 10
   • Top 3 specific issues ranked by severity
   • 2–3 concrete rewrite suggestions with brief before/after examples
 
 Rules:
-- Do not skip any chunk in stage 3.
-- Do not write the final report until every tool call for every chunk is complete.
+- Do not skip any chunk in stage 3, but do not retry them.
+- Do not write the final report until every tool call is complete.
 - In the final report, use clear Markdown headings and bullet points.
 
 ${hasText
