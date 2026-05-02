@@ -5,8 +5,8 @@ import { analyze_chunk, ANALYZE_CHUNK_SCHEMA } from './analyze_chunk.js';
 const MODELS = [
   'gemini-3.1-flash-lite-preview',
   'gemini-2.5-flash',
-  'gemma-4-26b',
-  'gemma-4-31b'
+  'gemma-4-26b-a4b-it',
+  'gemma-4-31b-it'
 ];
 let currentModelIdx = 0;
 
