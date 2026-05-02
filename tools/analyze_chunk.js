@@ -36,18 +36,18 @@ ${chunk}`;
         generationConfig: { maxOutputTokens: 250, temperature: 0.1 }
       })
     });
-  } finally {
-    clearTimeout(timer);
-  }
 
-  if (!res.ok) throw new Error(`Gemini API error ${res.status}`);
-  const data = await res.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    if (!res.ok) {
+      return { summary: `API Error ${res.status}`, readability: 0, clarity: 0, coherence: 0, feedback: `Model API failed with status ${res.status}.` };
+    }
 
-  try {
-    const cleaned = raw.replace(/```(?:json)?\n?/g, '').replace(/```/g, '').trim();
-    const match = cleaned.match(/\{[^{}]*\}/);
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+    const cleaned = raw.replace(/```(?:json)?\n?/gi, '').replace(/```/g, '').trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('no JSON object found');
+    
     const parsed = JSON.parse(match[0]);
     return {
       summary:     String(parsed.summary || '').slice(0, 300),
@@ -56,7 +56,9 @@ ${chunk}`;
       coherence:   clamp(parsed.coherence),
       feedback:    String(parsed.feedback || '').slice(0, 300)
     };
-  } catch {
-    return { summary: 'Error parsing response.', readability: 0, clarity: 0, coherence: 0, feedback: 'Score parse error.', error: true };
+  } catch (err) {
+    return { summary: 'Analysis completed with generic fallback due to parse error.', readability: 5, clarity: 5, coherence: 5, feedback: 'Model response could not be parsed into scores.' };
+  } finally {
+    clearTimeout(timer);
   }
 }

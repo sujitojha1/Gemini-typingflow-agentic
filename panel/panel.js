@@ -3,6 +3,8 @@
 let capturedWordCount = 0;
 let typingChunks      = [];   // set from chunk_text tool result or local extract
 let pendingTyping     = false;
+let analyzeCardNode   = null;
+let analyzeCount      = 0;
 
 // ─── Typing session state ─────────────────────────────────────────────────────
 
@@ -124,6 +126,8 @@ function resetUI(full = true) {
   $('spinner').classList.add('hidden');
   $('run-btn').disabled    = false;
   $('run-btn').textContent = 'Process Page Intelligence';
+  analyzeCardNode = null;
+  analyzeCount = 0;
   resetPipeline();
 }
 
@@ -195,6 +199,61 @@ function onStep({ name, args, result }) {
   }
 
   const meta    = TOOL_META[name] || { icon: '🔧', label: name, css: 'unknown' };
+
+  if (name === 'analyze_chunk') {
+    analyzeCount++;
+    const total = typingChunks.length || '?';
+    const summaryText = `${analyzeCount} / ${total} chunks analyzed`;
+
+    if (!analyzeCardNode) {
+      analyzeCardNode = document.createElement('div');
+      analyzeCardNode.className = `step-card step-${meta.css}`;
+      analyzeCardNode.innerHTML = `
+        <div class="step-header t-topbar" style="border-radius: 8px; padding: 8px 12px; cursor: pointer; display: flex; align-items: center; border-bottom: none;">
+          <div style="display: flex; gap: 6px; margin-right: 12px;">
+            <div class="t-dot" style="background:#ED655A; width: 10px; height: 10px; border-radius: 50%;"></div>
+            <div class="t-dot" style="background:#E1C04C; width: 10px; height: 10px; border-radius: 50%;"></div>
+            <div class="t-dot" style="background:#72BE47; width: 10px; height: 10px; border-radius: 50%;"></div>
+          </div>
+          <span class="step-icon">${meta.icon}</span>
+          <span class="step-name" style="flex:1; margin-left: 8px; color: var(--text);">analyze_chunks</span>
+          <span class="step-summary" id="analyze-summary-text" style="margin-right: 12px;">${summaryText}</span>
+          <button class="step-toggle" aria-label="Toggle details" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">▾</button>
+        </div>
+        <div class="step-body hidden" id="analyze-body-container" style="padding-top: 12px;"></div>
+      `;
+
+      analyzeCardNode.querySelector('.step-header').addEventListener('click', () => {
+        const body = analyzeCardNode.querySelector('.step-body');
+        const btn  = analyzeCardNode.querySelector('.step-toggle');
+        body.classList.toggle('hidden');
+        btn.textContent = body.classList.contains('hidden') ? '▾' : '▴';
+      });
+
+      $('steps-container').appendChild(analyzeCardNode);
+    } else {
+      const summaryEl = analyzeCardNode.querySelector('#analyze-summary-text');
+      if (summaryEl) summaryEl.textContent = summaryText;
+    }
+
+    const detailHtml = buildDetailHtml(name, args, result);
+    const chunkBlock = document.createElement('div');
+    chunkBlock.className = 'analyze-chunk-block';
+    chunkBlock.style.borderTop = '1px solid #333';
+    chunkBlock.style.marginTop = '12px';
+    chunkBlock.style.paddingTop = '12px';
+    
+    const { readability: r = 0, clarity: c = 0, coherence: co = 0 } = result || {};
+
+    chunkBlock.innerHTML = `
+      <div style="font-weight: 600; margin-bottom: 8px; color: #888;">Chunk ${analyzeCount} &middot; R:${r} C:${c} Co:${co}</div>
+      ${detailHtml}
+    `;
+    analyzeCardNode.querySelector('#analyze-body-container').appendChild(chunkBlock);
+    analyzeCardNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+
   const summary = buildSummary(name, result);
   const card    = document.createElement('div');
   card.className = `step-card step-${meta.css}`;
