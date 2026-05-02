@@ -1,8 +1,16 @@
 // Runs inside the chrome-extension:// iframe.
-// Talks to background via chrome.runtime.sendMessage.
-// Talks to content.js via window.parent.postMessage.
 
-let capturedText = '';
+let capturedWordCount = 0;
+let typingChunks      = [];   // set from chunk_text tool result or local extract
+let pendingTyping     = false;
+
+// ─── Typing session state ─────────────────────────────────────────────────────
+
+let typingIdx         = 0;
+let sessionStart      = 0;
+let chunkStart        = 0;
+let sessionTotalChars = 0;
+let statsTimer        = null;
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -32,12 +40,34 @@ function showView(id) {
 
 function wireButtons() {
   $('save-key-btn').addEventListener('click', saveKey);
-  $('api-key-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); });
+  $('api-key-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
   $('settings-btn').addEventListener('click', () => showView('setup-view'));
   $('refresh-btn').addEventListener('click', requestFieldText);
   $('run-btn').addEventListener('click', runAgent);
+  $('typing-btn').addEventListener('click', openTypingSession);
   $('reset-btn').addEventListener('click', resetUI);
   $('copy-btn').addEventListener('click', copyReport);
+
+  // Typing view controls
+  $('t-close').addEventListener('click', closeTypingSession);
+  $('t-exit').addEventListener('click', closeTypingSession);
+  $('t-prev').addEventListener('click', () => { typingIdx = Math.max(0, typingIdx - 1); renderChunk(); });
+  $('t-next').addEventListener('click', () => { typingIdx++; renderChunk(); });
+
+  // Hidden input handlers
+  const inp = $('t-input');
+  inp.addEventListener('input',   onTypingInput);
+  inp.addEventListener('paste',   e => e.preventDefault());
+  inp.addEventListener('drop',    e => e.preventDefault());
+  inp.addEventListener('keydown', e => {
+    // Allow backspace, arrow keys; block clipboard shortcuts
+    if ((e.ctrlKey || e.metaKey) && ['v','c','x','a'].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+    }
+  });
+
+  // Click on target re-focuses input
+  $('t-target').addEventListener('click', () => $('t-input').focus());
 }
 
 function $(id) { return document.getElementById(id); }
@@ -57,47 +87,44 @@ function requestFieldText() {
   window.parent.postMessage({ type: 'GET_FIELD_TEXT' }, '*');
 }
 
-function updatePreview(text) {
-  capturedText = text || '';
-  const words  = capturedText.trim().split(/\s+/).filter(Boolean).length;
-  const badge  = $('word-badge');
-  const box    = $('field-preview');
-  if (capturedText) {
-    box.textContent = capturedText.slice(0, 280) + (capturedText.length > 280 ? '…' : '');
-    badge.textContent = `${words} words`;
+function updateWordBadge(text) {
+  capturedWordCount = text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+  const badge = $('word-badge');
+  if (capturedWordCount > 0) {
+    badge.textContent = `${capturedWordCount} words`;
     badge.classList.remove('hidden');
   } else {
-    box.textContent = 'Click ↻ to capture page content, or focus a text field first.';
-    badge.textContent = '';
+    badge.classList.add('hidden');
   }
 }
 
-// ─── Agent controls ───────────────────────────────────────────────────────────
+// ─── Agent run ────────────────────────────────────────────────────────────────
 
 function runAgent() {
-  if (!capturedText.trim()) {
-    const box = $('field-preview');
-    box.textContent = 'No text captured — click ↻ Refresh from page first.';
-    box.style.color = 'var(--red, #dc2626)';
-    setTimeout(() => { box.style.color = ''; updatePreview(capturedText); }, 3000);
-    return;
-  }
   const prompt = $('prompt-input').value.trim() || 'Analyse my writing and give a full report.';
   resetUI(false);
+
+  $('pipeline').classList.remove('hidden');
   $('chain-section').classList.remove('hidden');
   $('spinner').classList.remove('hidden');
+  setPipelineStep('count_stats', 'active');
+
   $('run-btn').disabled    = true;
-  $('run-btn').textContent = '⏳ Running…';
-  window.parent.postMessage({ type: 'RUN_AGENT', text: capturedText, prompt }, '*');
+  $('run-btn').textContent = '⏳ Analysing…';
+
+  // Empty text → content.js calls getFieldText() to grab full page content
+  window.parent.postMessage({ type: 'RUN_AGENT', text: '', prompt }, '*');
 }
 
 function resetUI(full = true) {
   $('steps-container').innerHTML = '';
   $('chain-section').classList.add('hidden');
   $('report-section').classList.add('hidden');
+  $('pipeline').classList.add('hidden');
   $('spinner').classList.add('hidden');
   $('run-btn').disabled    = false;
-  $('run-btn').textContent = '▶ Run Agent';
+  $('run-btn').textContent = 'Process Page Intelligence';
+  resetPipeline();
   if (full) $('prompt-input').value = '';
 }
 
@@ -110,20 +137,43 @@ function copyReport() {
       setTimeout(() => { $('copy-btn').textContent = 'Copy report'; }, 2000);
     })
     .catch(() => {
-      $('copy-btn').textContent = 'Copy failed — try again';
+      $('copy-btn').textContent = 'Copy failed';
       setTimeout(() => { $('copy-btn').textContent = 'Copy report'; }, 2500);
     });
 }
 
-// ─── Incoming messages from content.js ───────────────────────────────────────
+// ─── Pipeline ─────────────────────────────────────────────────────────────────
+
+const PIPE_ORDER = ['count_stats', 'chunk_text', 'summarize_chunk', 'score_chunk', 'done'];
+
+function resetPipeline() {
+  PIPE_ORDER.forEach(n => setPipelineStep(n, 'idle'));
+}
+
+function setPipelineStep(name, state) {
+  const el = $(`pipe-${name}`);
+  if (el) el.className = `pipe-step ${state}`;
+}
+
+function updatePipeline(name) {
+  const idx = PIPE_ORDER.indexOf(name);
+  if (idx === -1) return;
+  PIPE_ORDER.slice(0, idx).forEach(s => setPipelineStep(s, 'done'));
+  setPipelineStep(name, 'active');
+}
+
+// ─── Incoming messages ────────────────────────────────────────────────────────
 
 window.addEventListener('message', (e) => {
   const msg = e.data;
   if (!msg?.type) return;
   switch (msg.type) {
-    case 'FIELD_TEXT':  updatePreview(msg.text); break;
-    case 'AGENT_STEP':  onStep(msg); break;
-    case 'AGENT_DONE':  onDone(msg.text); break;
+    case 'FIELD_TEXT':
+      updateWordBadge(msg.text);
+      if (pendingTyping) startTypingWithText(msg.text);
+      break;
+    case 'AGENT_STEP':  onStep(msg);          break;
+    case 'AGENT_DONE':  onDone(msg.text);     break;
     case 'AGENT_ERROR': onError(msg.message); break;
   }
 });
@@ -131,23 +181,25 @@ window.addEventListener('message', (e) => {
 // ─── Step cards ───────────────────────────────────────────────────────────────
 
 const TOOL_META = {
-  count_stats:      { icon: '📊', label: 'count_stats',      css: 'count-stats' },
-  chunk_text:       { icon: '✂️',  label: 'chunk_text',       css: 'chunk-text' },
-  summarize_chunk:  { icon: '📝', label: 'summarize_chunk',  css: 'summarize-chunk' },
-  score_chunk:      { icon: '⭐', label: 'score_chunk',      css: 'score-chunk' }
+  count_stats:     { icon: '📊', label: 'count_stats',     css: 'count-stats' },
+  chunk_text:      { icon: '✂️',  label: 'chunk_text',      css: 'chunk-text' },
+  summarize_chunk: { icon: '📝', label: 'summarize_chunk', css: 'summarize-chunk' },
+  score_chunk:     { icon: '⭐', label: 'score_chunk',     css: 'score-chunk' }
 };
 
 function onStep({ name, args, result }) {
   $('spinner').classList.add('hidden');
+  updatePipeline(name);
 
-  const meta      = TOOL_META[name] || { icon: '🔧', label: name, css: 'unknown' };
-  const summary   = buildSummary(name, result);
+  // Store chunks from chunk_text for typing session
+  if (name === 'chunk_text' && result?.chunks?.length) {
+    typingChunks = result.chunks;
+  }
 
-  const card = document.createElement('div');
+  const meta    = TOOL_META[name] || { icon: '🔧', label: name, css: 'unknown' };
+  const summary = buildSummary(name, result);
+  const card    = document.createElement('div');
   card.className = `step-card step-${meta.css}`;
-
-  // Build inner HTML
-  const detailHtml = buildDetailHtml(name, args, result);
 
   card.innerHTML = `
     <div class="step-header">
@@ -156,7 +208,7 @@ function onStep({ name, args, result }) {
       <span class="step-summary">${esc(summary)}</span>
       <button class="step-toggle" aria-label="Toggle details">▾</button>
     </div>
-    <div class="step-body hidden">${detailHtml}</div>
+    <div class="step-body hidden">${buildDetailHtml(name, args, result)}</div>
   `;
 
   card.querySelector('.step-header').addEventListener('click', () => {
@@ -174,7 +226,7 @@ function buildSummary(name, result) {
   if (!result) return '';
   switch (name) {
     case 'count_stats':
-      return `${result.word_count ?? '?'} words · ${result.sentence_count ?? '?'} sentences · ${result.paragraph_count ?? '?'} paragraphs`;
+      return `${result.word_count ?? '?'} words · ${result.sentence_count ?? '?'} sentences`;
     case 'chunk_text': {
       const n = result.chunks?.length ?? 0;
       return `${n} chunk${n !== 1 ? 's' : ''} produced`;
@@ -190,8 +242,8 @@ function buildSummary(name, result) {
 }
 
 function buildDetailHtml(name, args, result) {
-  const safeArgs = sanitiseArgs(args);
-  const argsJson = JSON.stringify(safeArgs, null, 2);
+  const safeArgs   = sanitiseArgs(args);
+  const argsJson   = JSON.stringify(safeArgs, null, 2);
 
   if (name === 'score_chunk' && result && !result.error) {
     const { readability: r = 0, clarity: c = 0, coherence: co = 0, feedback = '' } = result;
@@ -229,20 +281,16 @@ function scorePill(label, value) {
 function sanitiseArgs(args) {
   const out = { ...args };
   ['text', 'chunk'].forEach(k => {
-    if (typeof out[k] === 'string' && out[k].length > 120) {
-      out[k] = out[k].slice(0, 120) + '…';
-    }
+    if (typeof out[k] === 'string' && out[k].length > 120) out[k] = out[k].slice(0, 120) + '…';
   });
   return out;
 }
 
-// ─── Final report ─────────────────────────────────────────────────────────────
-
 function onDone(text) {
   $('spinner').classList.add('hidden');
   $('run-btn').disabled    = false;
-  $('run-btn').textContent = '▶ Run Agent';
-
+  $('run-btn').textContent = 'Process Page Intelligence';
+  PIPE_ORDER.forEach(s => setPipelineStep(s, 'done'));
   $('report-body').innerHTML = renderMarkdown(text || '(No report returned.)');
   $('report-section').classList.remove('hidden');
   $('report-section').scrollIntoView({ behavior: 'smooth' });
@@ -251,15 +299,192 @@ function onDone(text) {
 function onError(message) {
   $('spinner').classList.add('hidden');
   $('run-btn').disabled    = false;
-  $('run-btn').textContent = '▶ Run Agent';
-
+  $('run-btn').textContent = 'Process Page Intelligence';
   const el = document.createElement('div');
   el.className   = 'error-card';
   el.textContent = `Error: ${message}`;
   $('steps-container').appendChild(el);
+  $('chain-section').classList.remove('hidden');
 }
 
-// ─── Minimal Markdown renderer ────────────────────────────────────────────────
+// ─── Typing session ───────────────────────────────────────────────────────────
+
+function openTypingSession() {
+  if (typingChunks.length > 0) {
+    // Use chunks already extracted by the agent
+    startTyping();
+    return;
+  }
+  // No agent run yet — pull page text and chunk locally
+  pendingTyping = true;
+  $('typing-btn').disabled    = true;
+  $('typing-btn').textContent = '⏳ Extracting…';
+  requestFieldText();
+}
+
+function startTypingWithText(text) {
+  pendingTyping = false;
+  $('typing-btn').disabled    = false;
+  $('typing-btn').textContent = 'Launch Typing Session';
+
+  if (!text?.trim()) {
+    setTypingBtnError('No content — click ↻ first');
+    return;
+  }
+
+  typingChunks = extractChunks(text);
+  if (!typingChunks.length) {
+    setTypingBtnError('No chunks found');
+    return;
+  }
+
+  startTyping();
+}
+
+function setTypingBtnError(msg) {
+  $('typing-btn').textContent = msg;
+  setTimeout(() => { $('typing-btn').textContent = 'Launch Typing Session'; }, 3000);
+}
+
+function startTyping() {
+  typingIdx         = 0;
+  sessionStart      = Date.now();
+  sessionTotalChars = 0;
+  showView('typing-view');
+  renderChunk();
+}
+
+function renderChunk() {
+  clearInterval(statsTimer);
+
+  if (typingIdx >= typingChunks.length) {
+    showComplete();
+    return;
+  }
+
+  const text = typingChunks[typingIdx].replace(/\s+/g, ' ').trim();
+
+  // Build character spans
+  $('t-target').innerHTML = text.split('').map((ch, i) =>
+    `<span class="tc" data-i="${i}">${ch === ' ' ? ' ' : esc(ch)}</span>`
+  ).join('');
+
+  // Set cursor on first char
+  const first = $('t-target').querySelector('.tc');
+  if (first) first.classList.add('cursor');
+
+  $('t-chunk-num').textContent = `${typingIdx + 1} / ${typingChunks.length}`;
+  $('t-wpm').textContent       = '0';
+  $('t-acc').textContent       = '—';
+  $('t-time').textContent      = '0s';
+  $('t-prev').disabled         = typingIdx === 0;
+
+  const inp = $('t-input');
+  inp.value = '';
+  chunkStart = Date.now();
+
+  statsTimer = setInterval(() => {
+    const sec = Math.round((Date.now() - chunkStart) / 1000);
+    $('t-time').textContent = sec + 's';
+  }, 500);
+
+  setTimeout(() => inp.focus(), 60);
+}
+
+function onTypingInput() {
+  requestAnimationFrame(updateTypingState);
+}
+
+function updateTypingState() {
+  const inp   = $('t-input');
+  const typed = inp.value;
+  const text  = typingChunks[typingIdx].replace(/\s+/g, ' ').trim();
+  const pos   = typed.length;
+  const spans = $('t-target').querySelectorAll('.tc');
+
+  spans.forEach((sp, i) => {
+    sp.className = 'tc';
+    if (i < pos) {
+      sp.classList.add(typed[i] === text[i] ? 'correct' : 'wrong');
+    } else if (i === pos) {
+      sp.classList.add('cursor');
+    }
+  });
+
+  // WPM
+  const elapsedMin = (Date.now() - chunkStart) / 60000;
+  $('t-wpm').textContent = elapsedMin > 0.005
+    ? Math.round((pos / 5) / elapsedMin)
+    : '0';
+
+  // Accuracy
+  let correct = 0;
+  for (let i = 0; i < pos; i++) if (typed[i] === text[i]) correct++;
+  $('t-acc').textContent = pos > 0 ? Math.round((correct / pos) * 100) + '%' : '—';
+
+  // Advance when the full chunk is typed correctly
+  if (pos >= text.length && typed === text) {
+    clearInterval(statsTimer);
+    sessionTotalChars += pos;
+    setTimeout(() => { typingIdx++; renderChunk(); }, 350);
+  }
+}
+
+function showComplete() {
+  clearInterval(statsTimer);
+  $('t-body').classList.add('hidden');
+  $('t-complete').classList.remove('hidden');
+
+  const elapsed = Math.round((Date.now() - sessionStart) / 1000);
+  const wpm     = elapsed > 0 ? Math.round((sessionTotalChars / 5) / (elapsed / 60)) : 0;
+
+  $('tc-time').textContent  = elapsed + 's';
+  $('tc-chars').textContent = sessionTotalChars;
+  $('tc-wpm').textContent   = wpm;
+  $('t-done-sub').textContent = `all ${typingChunks.length} chunk${typingChunks.length !== 1 ? 's' : ''} engaged`;
+}
+
+function closeTypingSession() {
+  clearInterval(statsTimer);
+  typingChunks = [];
+  $('t-body').classList.remove('hidden');
+  $('t-complete').classList.add('hidden');
+  showView('main-view');
+  $('typing-btn').textContent = 'Launch Typing Session';
+  $('typing-btn').disabled    = false;
+}
+
+// ─── Local chunk extraction (no API — mirrors chunk_text tool logic) ──────────
+
+function extractChunks(text, maxWords = 120) {
+  const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 60);
+  if (!paragraphs.length) paragraphs.push(text.trim());
+
+  const chunks = [];
+  for (const para of paragraphs) {
+    if (chunks.length >= 8) break;
+    const words = para.split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) {
+      chunks.push(para);
+    } else {
+      const sentences = para.split(/(?<=[.!?])\s+(?=[A-Z])/);
+      let cur = [], curLen = 0;
+      for (const s of sentences) {
+        const len = s.split(/\s+/).filter(Boolean).length;
+        if (curLen + len > maxWords && cur.length) {
+          chunks.push(cur.join(' '));
+          cur = []; curLen = 0;
+          if (chunks.length >= 8) break;
+        }
+        cur.push(s); curLen += len;
+      }
+      if (cur.length && chunks.length < 8) chunks.push(cur.join(' '));
+    }
+  }
+  return chunks.slice(0, 8);
+}
+
+// ─── Markdown renderer ────────────────────────────────────────────────────────
 
 function renderMarkdown(text) {
   let html = esc(text);
@@ -270,12 +495,9 @@ function renderMarkdown(text) {
   html = html.replace(/\*(.+?)\*/g,     '<em>$1</em>');
   html = html.replace(/^[-•] (.+)$/gm,  '<li>$1</li>');
   html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-  // Wrap consecutive <li> runs in <ul>
-  html = html.replace(/(<li>[\s\S]*?<\/li>)(\n<li>[\s\S]*?<\/li>)*/g,
-    m => `<ul>${m}</ul>`);
+  html = html.replace(/(<li>[\s\S]*?<\/li>)(\n<li>[\s\S]*?<\/li>)*/g, m => `<ul>${m}</ul>`);
   html = html.replace(/\n{2,}/g, '</p><p>');
   html = `<p>${html}</p>`;
-  // Remove empty paragraphs
   html = html.replace(/<p>\s*<\/p>/g, '');
   return html;
 }

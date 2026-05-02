@@ -3,77 +3,154 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TypingFlow Agent</title>
+  <title>Gemini TypingFlow</title>
   <link rel="stylesheet" href="panel.css">
 </head>
 <body>
   <div id="app">
 
-    <!-- ── Setup view (API key entry) ───────────────────────────────────── -->
+    <!-- ── Setup view ───────────────────────────────────────────────────────── -->
     <div id="setup-view" class="view hidden">
       <div class="setup-body">
-        <div class="logo">TF</div>
-        <h2>TypingFlow Agent</h2>
-        <p>Paste your Gemini API key to get started.</p>
-        <input id="api-key-input" type="password" placeholder="AIza…" autocomplete="off">
+        <div class="hero-icon">✦</div>
+        <h1 class="hero-title">Gemini TypingFlow</h1>
+        <p class="hero-sub">AI-Powered Active Recall</p>
+        <input id="api-key-input" type="password" placeholder="Paste Gemini API key (AIza…)" autocomplete="off">
         <button id="save-key-btn" class="btn-primary">Save &amp; Continue</button>
-        <a class="link" href="https://aistudio.google.com/app/apikey" target="_blank">
-          Get a free API key →
-        </a>
+        <a class="link" href="https://aistudio.google.com/app/apikey" target="_blank">Get a free API key →</a>
       </div>
     </div>
 
-    <!-- ── Main view ────────────────────────────────────────────────────── -->
+    <!-- ── Main view ────────────────────────────────────────────────────────── -->
     <div id="main-view" class="view hidden">
 
-      <header class="panel-header">
-        <div class="header-logo">TF</div>
-        <span class="header-title">TypingFlow Agent</span>
-        <button id="settings-btn" class="icon-btn" title="Change API key">⚙</button>
-      </header>
+      <div class="hero">
+        <div class="hero-icon">✦</div>
+        <h1 class="hero-title">Gemini TypingFlow</h1>
+        <p class="hero-sub">AI-Powered Active Recall</p>
+      </div>
 
-      <!-- Captured text preview -->
-      <section class="section field-section">
-        <div class="section-label">
-          Captured text
-          <span id="word-badge" class="badge"></span>
+      <!-- Minimal status bar (no raw text shown) -->
+      <div class="content-section status-row">
+        <span class="section-label">Page Content</span>
+        <span id="word-badge" class="badge hidden"></span>
+        <div class="row-actions">
+          <button id="refresh-btn" class="btn-icon" title="Refresh from page">↻</button>
+          <button id="settings-btn" class="btn-icon" title="Settings">⚙</button>
         </div>
-        <div id="field-preview" class="preview-box">
-          Click ↻ to capture page content, or focus a text field first.
-        </div>
-        <button id="refresh-btn" class="btn-small">↻ Refresh from page</button>
-      </section>
+      </div>
 
-      <!-- Prompt + run -->
-      <section class="section prompt-section">
+      <!-- Prompt -->
+      <div class="content-section">
         <textarea id="prompt-input" rows="2"
           placeholder="Analyse my writing and give a full report."></textarea>
-        <button id="run-btn" class="btn-primary">▶ Run Agent</button>
-      </section>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="action-btns">
+        <button id="run-btn" class="btn-primary">Process Page Intelligence</button>
+        <button id="typing-btn" class="btn-secondary">Launch Typing Session</button>
+      </div>
+
+      <!-- Pipeline status bar -->
+      <div id="pipeline" class="pipeline hidden">
+        <div class="pipe-step idle" id="pipe-count_stats">
+          <div class="pipe-dot"></div>
+          <span class="pipe-label">Stats</span>
+        </div>
+        <div class="pipe-connector"></div>
+        <div class="pipe-step idle" id="pipe-chunk_text">
+          <div class="pipe-dot"></div>
+          <span class="pipe-label">Chunk</span>
+        </div>
+        <div class="pipe-connector"></div>
+        <div class="pipe-step idle" id="pipe-summarize_chunk">
+          <div class="pipe-dot"></div>
+          <span class="pipe-label">Summarise</span>
+        </div>
+        <div class="pipe-connector"></div>
+        <div class="pipe-step idle" id="pipe-score_chunk">
+          <div class="pipe-dot"></div>
+          <span class="pipe-label">Score</span>
+        </div>
+        <div class="pipe-connector"></div>
+        <div class="pipe-step idle" id="pipe-done">
+          <div class="pipe-dot"></div>
+          <span class="pipe-label">Report</span>
+        </div>
+      </div>
 
       <!-- Reasoning chain -->
-      <section id="chain-section" class="section chain-section hidden">
-        <div class="section-label">Reasoning Chain</div>
+      <div id="chain-section" class="chain-section hidden">
         <div id="spinner" class="spinner hidden">
           <div class="dot"></div>
           <span>Agent working…</span>
         </div>
         <div id="steps-container"></div>
-      </section>
+      </div>
 
       <!-- Final report -->
-      <section id="report-section" class="section report-section hidden">
+      <div id="report-section" class="report-section hidden">
         <div class="section-label">Final Report</div>
         <div id="report-body" class="report-body"></div>
         <div class="report-actions">
           <button id="copy-btn" class="btn-primary">Copy report</button>
-          <button id="reset-btn" class="btn-small">New analysis</button>
+          <button id="reset-btn" class="btn-secondary">New analysis</button>
         </div>
-      </section>
+      </div>
 
     </div><!-- /main-view -->
-  </div><!-- /app -->
 
+    <!-- ── Typing view ───────────────────────────────────────────────────────── -->
+    <div id="typing-view" class="view hidden">
+
+      <div class="t-topbar">
+        <div class="t-dot" style="background:#ED655A"></div>
+        <div class="t-dot" style="background:#E1C04C"></div>
+        <div class="t-dot" style="background:#72BE47"></div>
+        <span class="t-title">typingflow — type</span>
+        <button id="t-close" class="t-close-btn">✕</button>
+      </div>
+
+      <!-- Active typing challenge -->
+      <div id="t-body" class="t-body">
+        <div class="t-progress-row">
+          <span id="t-chunk-num" class="t-chunk-num">1 / 1</span>
+          <div class="t-nav">
+            <button id="t-prev" class="t-nav-btn" disabled>← prev</button>
+            <button id="t-next" class="t-nav-btn">skip →</button>
+          </div>
+        </div>
+
+        <div id="t-target" class="t-target"></div>
+
+        <!-- Hidden input captures keystrokes -->
+        <input id="t-input" type="text" class="t-input-hidden"
+          autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+
+        <div class="t-statsrow">
+          <div class="t-stat"><div id="t-wpm"  class="t-val">0</div><div class="t-label">wpm</div></div>
+          <div class="t-stat"><div id="t-acc"  class="t-val">—</div><div class="t-label">acc</div></div>
+          <div class="t-stat"><div id="t-time" class="t-val">0s</div><div class="t-label">time</div></div>
+        </div>
+      </div>
+
+      <!-- Completion screen -->
+      <div id="t-complete" class="t-body t-complete hidden">
+        <div class="t-done-code">process exited with code 0</div>
+        <div class="t-done-title">$ session --complete</div>
+        <div id="t-done-sub" class="t-done-sub">all chunks engaged</div>
+        <div class="t-statsrow t-statsrow-center">
+          <div class="t-stat"><div id="tc-time"  class="t-val">0s</div><div class="t-label">time</div></div>
+          <div class="t-stat"><div id="tc-chars" class="t-val">0</div><div class="t-label">chars</div></div>
+          <div class="t-stat"><div id="tc-wpm"   class="t-val">0</div><div class="t-label">wpm</div></div>
+        </div>
+        <button id="t-exit" class="t-action-btn">exit</button>
+      </div>
+
+    </div><!-- /typing-view -->
+
+  </div><!-- /app -->
   <script src="panel.js"></script>
 </body>
 </html>
