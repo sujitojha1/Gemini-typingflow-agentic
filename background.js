@@ -5,14 +5,7 @@ const TIMEOUT_MS     = 120_000;
 
 // ─── Action click → toggle panel in active tab ───────────────────────────────
 
-chrome.action.onClicked.addListener((tab) => {
-  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' }).catch(() => {
-    // Content script not yet ready on this page — inject it first
-    chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] })
-      .then(() => chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' }))
-      .catch(console.error);
-  });
-});
+// Action handled by popup.
 
 // ─── Message handler ──────────────────────────────────────────────────────────
 
@@ -122,7 +115,8 @@ async function runAgentLoop(text, userPrompt, tabId) {
 }
 
 function send(tabId, msg) {
-  chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+  // Broadcast to extension pages (like the popup)
+  chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
 // ─── System prompt ────────────────────────────────────────────────────────────

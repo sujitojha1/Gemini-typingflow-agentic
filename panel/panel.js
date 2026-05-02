@@ -103,11 +103,18 @@ function requestFieldText() {
   chrome.tabs.query({active: true, currentWindow: true}, tabs => {
     if (tabs[0]) {
       chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FIELD_TEXT' }, resp => {
+        if (chrome.runtime.lastError) console.warn(chrome.runtime.lastError.message);
         if (resp && resp.text) {
           updateWordBadge(resp.text);
           if (pendingTyping) startTypingWithText(resp.text);
+        } else if (pendingTyping) {
+          setTypingBtnError('Refresh page to type');
+          pendingTyping = false;
         }
       });
+    } else if (pendingTyping) {
+      setTypingBtnError('No active tab');
+      pendingTyping = false;
     }
   });
 }
