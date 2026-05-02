@@ -23,11 +23,21 @@ function isTextField(el) {
 }
 
 function getFieldText() {
-  if (!lastFocusedField) return '';
-  if (lastFocusedField.tagName === 'TEXTAREA' || lastFocusedField.tagName === 'INPUT') {
-    return lastFocusedField.value;
+  // Prefer focused editable field
+  if (lastFocusedField) {
+    if (lastFocusedField.tagName === 'TEXTAREA' || lastFocusedField.tagName === 'INPUT') {
+      return lastFocusedField.value;
+    }
+    const text = lastFocusedField.innerText || '';
+    if (text.trim()) return text;
   }
-  return lastFocusedField.innerText || '';
+  // Fall back to main article content, then full body
+  const contentEl =
+    document.querySelector('article') ||
+    document.querySelector('main') ||
+    document.querySelector('[role="main"]') ||
+    document.body;
+  return contentEl.innerText || '';
 }
 
 function insertIntoField(text) {

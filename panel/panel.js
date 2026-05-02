@@ -67,7 +67,7 @@ function updatePreview(text) {
     badge.textContent = `${words} words`;
     badge.classList.remove('hidden');
   } else {
-    box.textContent = 'Focus a text field on the page, then click ↻.';
+    box.textContent = 'Click ↻ to capture page content, or focus a text field first.';
     badge.textContent = '';
   }
 }
@@ -77,7 +77,7 @@ function updatePreview(text) {
 function runAgent() {
   if (!capturedText.trim()) {
     const box = $('field-preview');
-    box.textContent = 'No text captured — focus a text field on the page and click ↻ first.';
+    box.textContent = 'No text captured — click ↻ Refresh from page first.';
     box.style.color = 'var(--red, #dc2626)';
     setTimeout(() => { box.style.color = ''; updatePreview(capturedText); }, 3000);
     return;
