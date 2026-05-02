@@ -1,7 +1,7 @@
 import { TOOL_SCHEMAS, dispatchTool } from './tools/tools.js';
 
 const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
 const MAX_ITERATIONS = 30;
 const TIMEOUT_MS     = 120_000;

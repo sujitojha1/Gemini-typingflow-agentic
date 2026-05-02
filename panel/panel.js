@@ -101,7 +101,7 @@ function updateWordBadge(text) {
 // ─── Agent run ────────────────────────────────────────────────────────────────
 
 function runAgent() {
-  const prompt = $('prompt-input').value.trim() || 'Analyse my writing and give a full report.';
+  const prompt = 'Analyse my writing and give a full report.';
   resetUI(false);
 
   $('pipeline').classList.remove('hidden');
@@ -125,7 +125,6 @@ function resetUI(full = true) {
   $('run-btn').disabled    = false;
   $('run-btn').textContent = 'Process Page Intelligence';
   resetPipeline();
-  if (full) $('prompt-input').value = '';
 }
 
 function copyReport() {
@@ -347,6 +346,7 @@ function setTypingBtnError(msg) {
 }
 
 function startTyping() {
+  window.parent.postMessage({ type: 'TYPING_START' }, '*');
   typingIdx         = 0;
   sessionStart      = Date.now();
   sessionTotalChars = 0;
@@ -445,6 +445,7 @@ function showComplete() {
 }
 
 function closeTypingSession() {
+  window.parent.postMessage({ type: 'TYPING_END' }, '*');
   clearInterval(statsTimer);
   typingChunks = [];
   $('t-body').classList.remove('hidden');

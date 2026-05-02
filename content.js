@@ -128,5 +128,13 @@ window.addEventListener('message', (e) => {
     case 'COPY_TEXT':
       insertIntoField(msg.text);
       break;
+
+    case 'TYPING_START':
+      if (panelFrame) panelFrame.style.width = '100vw';
+      break;
+
+    case 'TYPING_END':
+      if (panelFrame) panelFrame.style.width = 'min(400px, 38vw)';
+      break;
   }
 });
