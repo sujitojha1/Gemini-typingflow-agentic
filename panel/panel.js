@@ -20,8 +20,19 @@ let statsTimer        = null;
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  checkApiKey();
-  wireButtons();
+  if (location.search.includes('mode=typing')) {
+    document.body.style.width = '100vw';
+    document.body.style.height = '100vh';
+    wireButtons();
+    chrome.storage.local.get(['typingChunks', 'sessionImage'], res => {
+      typingChunks = res.typingChunks || [];
+      sessionImage = res.sessionImage || '';
+      startTyping();
+    });
+  } else {
+    checkApiKey();
+    wireButtons();
+  }
 });
 
 function checkApiKey() {
@@ -440,8 +451,14 @@ function onError(message) {
 
 function openTypingSession() {
   if (typingChunks.length > 0) {
-    // Use chunks already extracted by the agent
-    startTyping();
+    chrome.storage.local.set({ typingChunks, sessionImage }, () => {
+      chrome.tabs.query({active: true, currentWindow: true}, tabs => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'OPEN_TYPING_IFRAME' });
+          window.close(); // Close popup
+        }
+      });
+    });
     return;
   }
   // No agent run yet — pull page text and chunk locally
@@ -467,7 +484,7 @@ function startTypingWithText(text) {
     return;
   }
 
-  startTyping();
+  openTypingSession();
 }
 
 function setTypingBtnError(msg) {
@@ -584,11 +601,15 @@ function showComplete() {
 function closeTypingSession() {
   clearInterval(statsTimer);
   typingChunks = [];
-  $('t-body').classList.remove('hidden');
-  $('t-complete').classList.add('hidden');
-  showView('main-view');
-  $('typing-btn').textContent = 'Launch Typing Session';
-  $('typing-btn').disabled    = false;
+  if (location.search.includes('mode=typing')) {
+    window.parent.postMessage({ type: 'CLOSE_TYPING_IFRAME' }, '*');
+  } else {
+    $('t-body').classList.remove('hidden');
+    $('t-complete').classList.add('hidden');
+    showView('main-view');
+    $('typing-btn').textContent = 'Launch Typing Session';
+    $('typing-btn').disabled    = false;
+  }
 }
 
 // ─── Local chunk extraction (no API — mirrors chunk_text tool logic) ──────────

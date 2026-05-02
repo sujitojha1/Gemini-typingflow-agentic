@@ -35,4 +35,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'GET_FIELD_TEXT') {
     sendResponse({ text: getFieldText() });
   }
+  if (msg.type === 'OPEN_TYPING_IFRAME') {
+    if (document.getElementById('tf-fullscreen-iframe')) return;
+    const frame = document.createElement('iframe');
+    frame.id = 'tf-fullscreen-iframe';
+    frame.src = chrome.runtime.getURL('panel/panel.html?mode=typing');
+    frame.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;border:none;z-index:2147483647;background:#0d0c0b;';
+    document.body.appendChild(frame);
+    document.body.style.overflow = 'hidden';
+  }
+});
+
+window.addEventListener('message', e => {
+  if (e.data?.type === 'CLOSE_TYPING_IFRAME') {
+    const frame = document.getElementById('tf-fullscreen-iframe');
+    if (frame) frame.remove();
+    document.body.style.overflow = '';
+  }
 });
