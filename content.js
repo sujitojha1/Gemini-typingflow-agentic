@@ -63,11 +63,11 @@ function playCorrectSound() {
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';
-    filter.frequency.value = 3500;
-    filter.Q.value = 0.7;
+    filter.frequency.value = 2200;
+    filter.Q.value = 1.2;
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.setValueAtTime(0.06, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
 
     source.connect(filter);
@@ -94,7 +94,7 @@ function playWrongSound() {
     distortion.curve = curve;
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.setValueAtTime(0.07, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
     osc.connect(distortion);
