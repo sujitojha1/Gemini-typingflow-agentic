@@ -201,6 +201,7 @@ async function fallbackDataUrl(tags) {
 
 importScripts(
     // Chunk-processing tools (parallel agentic track)
+    'tools/tool_check_relevance.js',
     'tools/tool_get_chunk_stats.js',
     'tools/tool_extract_subject.js',
     'tools/tool_evaluate_chunk.js',
