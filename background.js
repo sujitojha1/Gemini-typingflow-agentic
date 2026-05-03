@@ -60,6 +60,17 @@ function isValidHttpUrl(str) {
     catch { return false; }
 }
 
+// gemma-3-* models reject response_mime_type:"application/json" with HTTP 400
+function supportsJsonMode(modelId) {
+    return !modelId.startsWith('gemma-3');
+}
+
+// Gemma 4 thinking models prepend an empty {"text":"","thought":true} part before the real response
+function pickResponseText(data) {
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    return parts.find(p => p.text && !p.thought)?.text || null;
+}
+
 // ── Structuring System Prompt ────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an expert learning engine and strict JSON structuring agent.
@@ -112,7 +123,7 @@ async function callGeminiWithModel(payload, modelId) {
             return { error: msg };
         }
         const data = await response.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const jsonText = pickResponseText(data);
         if (!jsonText) {
             console.warn(`[typingflow] callGeminiWithModel ${modelId}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
             return { error: `${modelId} returned empty response.` };
@@ -178,7 +189,7 @@ async function callGemmaAPI(payload) {
         }
 
         const data = await response.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const jsonText = pickResponseText(data);
         if (!jsonText) {
             console.warn(`[typingflow] callGemmaAPI: empty response. Full:`, JSON.stringify(data).slice(0, 400));
             return { error: "Gemma returned an empty response." };

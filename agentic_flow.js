@@ -290,7 +290,7 @@ async function callAgent(allMessages, geminiApiKey, modelId) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             contents,
-            generationConfig: { response_mime_type: 'application/json' },
+            ...(supportsJsonMode(modelId) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
         }),
     }, 25000);
     if (!res.ok) {
@@ -300,7 +300,7 @@ async function callAgent(allMessages, geminiApiKey, modelId) {
         throw new Error(`Agent API ${res.status}: ${errDetail}`);
     }
     const data = await res.json();
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const raw = pickResponseText(data);
     if (!raw) {
         console.error(`[agent] callAgent ${modelId}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
         throw new Error('Empty response');
@@ -583,7 +583,7 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { response_mime_type: 'application/json' },
+                    ...(supportsJsonMode(model.id) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
                 }),
             }, 30000);
             if (!res.ok) {
@@ -595,7 +595,7 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
                 continue;
             }
             const data = await res.json();
-            const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            const jsonText = pickResponseText(data);
             if (!jsonText) {
                 console.warn(`[agent] chunking ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
                 agentBroadcast(tabId, '[Agent] Chunking empty', model.label,
