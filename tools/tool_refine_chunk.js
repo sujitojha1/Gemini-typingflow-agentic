@@ -26,7 +26,7 @@ Schema: {"refinedText":"<the improved content, preserving author voice, max 300 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' }
+                ...(supportsJsonMode(model.id) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
             })
         }, 20000);
         if (!res.ok) {
@@ -36,13 +36,13 @@ Schema: {"refinedText":"<the improved content, preserving author voice, max 300 
             return { refinedText: text, error: `API error ${res.status}: ${errDetail}` };
         }
         const data = await res.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const jsonText = pickResponseText(data);
         if (!jsonText) {
             console.warn(`[agent] toolRefineChunk ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
             return { refinedText: text, error: 'Empty response' };
         }
         try {
-            const parsed = JSON.parse(jsonText);
+            const parsed = JSON.parse(stripMarkdownFences(jsonText));
             let refined = parsed.refinedText || text;
             const words = refined.split(/\s+/);
             if (words.length > 300) refined = words.slice(0, 300).join(' ') + '…';

@@ -20,7 +20,7 @@ Schema: {"isAd":<boolean>,"reason":"<one short sentence explaining why>"}`;
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' }
+                ...(supportsJsonMode(model.id) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
             })
         }, 20000);
         if (!res.ok) {
@@ -30,13 +30,13 @@ Schema: {"isAd":<boolean>,"reason":"<one short sentence explaining why>"}`;
             return { isAd: false, reason: `API error ${res.status}: ${errDetail}`, error: true };
         }
         const data = await res.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const jsonText = pickResponseText(data);
         if (!jsonText) {
             console.warn(`[agent] toolCheckRelevance ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
             return { isAd: false, reason: 'Empty response', error: true };
         }
         try {
-            return JSON.parse(jsonText);
+            return JSON.parse(stripMarkdownFences(jsonText));
         } catch (parseErr) {
             console.error(`[agent] toolCheckRelevance ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
             return { isAd: false, reason: `Parse failed: ${parseErr.message}`, error: true };

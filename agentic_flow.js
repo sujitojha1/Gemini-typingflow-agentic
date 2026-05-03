@@ -602,15 +602,19 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
                     'no content in response — rotating model');
                 continue;
             }
-            let chunks;
+            let parsed;
             try {
-                chunks = JSON.parse(jsonText).chunks || null;
-            } catch (parseErr) {
-                console.error(`[agent] chunking ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 300));
+                parsed = JSON.parse(stripMarkdownFences(jsonText));
+            } catch {
+                parsed = extractJsonFromText(jsonText);
+            }
+            if (!parsed) {
+                console.error(`[agent] chunking ${model.label}: could not parse response | raw:`, jsonText.slice(0, 300));
                 agentBroadcast(tabId, '[Agent] Chunking parse error', model.label,
-                    `JSON parse failed — rotating model`);
+                    'could not parse response — rotating model');
                 continue;
             }
+            let chunks = parsed.chunks || null;
             if (!chunks?.length) {
                 console.warn(`[agent] chunking ${model.label}: parsed 0 chunks. jsonText:`, jsonText.slice(0, 300));
                 agentBroadcast(tabId, '[Agent] Chunking invalid', model.label,

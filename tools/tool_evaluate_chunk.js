@@ -20,7 +20,7 @@ Schema: {"score":<integer 1-5>,"clarity":<integer 1-5>,"completeness":<integer 1
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' }
+                ...(supportsJsonMode(model.id) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
             })
         }, 20000);
         if (!res.ok) {
@@ -30,13 +30,13 @@ Schema: {"score":<integer 1-5>,"clarity":<integer 1-5>,"completeness":<integer 1
             return { score: 0, critique: `API error ${res.status}: ${errDetail}`, error: true };
         }
         const data = await res.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const jsonText = pickResponseText(data);
         if (!jsonText) {
             console.warn(`[agent] toolEvaluateChunk ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
             return { score: 0, critique: 'Empty response', error: true };
         }
         try {
-            return JSON.parse(jsonText);
+            return JSON.parse(stripMarkdownFences(jsonText));
         } catch (parseErr) {
             console.error(`[agent] toolEvaluateChunk ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
             return { score: 0, critique: `Parse failed: ${parseErr.message}`, error: true };

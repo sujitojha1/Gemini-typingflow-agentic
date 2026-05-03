@@ -16,7 +16,7 @@ ${text.slice(0, 600)}`;
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' }
+                ...(supportsJsonMode(model.id) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
             })
         }, 20000);
         if (!res.ok) {
@@ -26,13 +26,13 @@ ${text.slice(0, 600)}`;
             return { subject: 'Untitled' };
         }
         const data = await res.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const jsonText = pickResponseText(data);
         if (!jsonText) {
             console.warn(`[agent] toolExtractSubject ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
             return { subject: 'Untitled' };
         }
         try {
-            return { subject: JSON.parse(jsonText).subject || 'Untitled' };
+            return { subject: JSON.parse(stripMarkdownFences(jsonText)).subject || 'Untitled' };
         } catch (parseErr) {
             console.error(`[agent] toolExtractSubject ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
             return { subject: 'Untitled' };

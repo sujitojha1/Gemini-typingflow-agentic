@@ -71,6 +71,11 @@ function pickResponseText(data) {
     return parts.find(p => p.text && !p.thought)?.text || null;
 }
 
+// Gemma 3 models (no JSON mode) often wrap their output in ```json fences — strip before parsing
+function stripMarkdownFences(text) {
+    return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+}
+
 // ── Structuring System Prompt ────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an expert learning engine and strict JSON structuring agent.
