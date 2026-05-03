@@ -50,58 +50,62 @@ function getAudioCtx() {
 
 function playCorrectSound() {
     const ctx = getAudioCtx();
-    const duration = 0.055;
-    const bufferSize = Math.floor(ctx.sampleRate * duration);
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 6);
-    }
+    ctx.resume().then(() => {
+        const duration = 0.05;
+        const bufferSize = Math.floor(ctx.sampleRate * duration);
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 6);
+        }
 
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
 
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = 2200;
-    filter.Q.value = 1.2;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 2200;
+        filter.Q.value = 0.8;
 
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.06, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.09, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
 
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    source.start();
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        source.start();
+    });
 }
 
 function playWrongSound() {
     const ctx = getAudioCtx();
-    const now = ctx.currentTime;
+    ctx.resume().then(() => {
+        const now = ctx.currentTime;
 
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(200, now);
-    osc.frequency.exponentialRampToValueAtTime(90, now + 0.12);
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.exponentialRampToValueAtTime(90, now + 0.12);
 
-    const distortion = ctx.createWaveShaper();
-    const curve = new Float32Array(256);
-    for (let i = 0; i < 256; i++) {
-        const x = (i * 2) / 256 - 1;
-        curve[i] = (Math.PI + 80) * x / (Math.PI + 80 * Math.abs(x));
-    }
-    distortion.curve = curve;
+        const distortion = ctx.createWaveShaper();
+        const curve = new Float32Array(256);
+        for (let i = 0; i < 256; i++) {
+            const x = (i * 2) / 256 - 1;
+            curve[i] = (Math.PI + 80) * x / (Math.PI + 80 * Math.abs(x));
+        }
+        distortion.curve = curve;
 
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.07, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.07, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
-    osc.connect(distortion);
-    distortion.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.12);
+        osc.connect(distortion);
+        distortion.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.12);
+    });
 }
 
 const INJECT_CSS = `
