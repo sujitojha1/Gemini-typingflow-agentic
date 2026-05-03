@@ -4,7 +4,7 @@ async function toolEvaluateChunk({ text }) {
         return { score: 0, clarity: 0, completeness: 0, critique: 'No API key', suggestions: '', error: true };
     }
 
-    const modelId = 'gemini-3.1-flash-lite-preview';
+    const modelId = pickAgentModel().id;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Evaluate the following learning content chunk for quality. Return ONLY valid JSON matching the schema exactly.

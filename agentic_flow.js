@@ -147,9 +147,10 @@ async function runAgentPipeline(tabId) {
 // Track 2 — LLM-Driven ReAct Agent Loop (optimized)
 // ═════════════════════════════════════════════════════════════════════════════
 
-const AGENT_MODEL = 'gemini-3.1-flash-lite-preview';
+// Agent model pool (AGENT_MODEL_POOL, pickAgentModel) defined in background.js globals
+
 const MAX_TURNS = 80;
-const CONTEXT_WINDOW = 12;  // keep only last N message pairs in context
+const CONTEXT_WINDOW = 12;
 
 // ── System prompt ────────────────────────────────────────────────────────────
 
@@ -245,8 +246,8 @@ async function executeTool(toolName, args, imageIndex) {
 
 // ── LLM caller (uses sliding context window) ─────────────────────────────────
 
-async function callAgent(allMessages, geminiApiKey) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${AGENT_MODEL}:generateContent?key=${geminiApiKey}`;
+async function callAgent(allMessages, geminiApiKey, modelId) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     // Sliding window: always keep the first message (system prompt) + last N
     let messages;
@@ -297,7 +298,8 @@ async function runAgenticLoop(tabId, payload) {
     if (!geminiApiKey) return;
 
     const loopStart = Date.now();
-    agentBroadcast(tabId, '[Agent] Init', AGENT_MODEL);
+    const initModel = pickAgentModel();
+    agentBroadcast(tabId, '[Agent] Init', initModel.label);
 
     // Phase 1: Index
     const sessionId = 'session_' + Date.now();
@@ -313,17 +315,17 @@ async function runAgenticLoop(tabId, payload) {
         [`tf_pt_${sessionId}_texts`]: textBlocks,
         tf_pt_coverage: [],
     });
-    agentBroadcast(tabId, '[Agent] Indexed', AGENT_MODEL,
+    agentBroadcast(tabId, '[Agent] Indexed', initModel.label,
         `${textBlocks.length} text | ${imageIndex.length} img`);
 
     // Phase 2: Chunk identification
     const chunkStart = Date.now();
-    agentBroadcast(tabId, '[Agent] Chunking', AGENT_MODEL);
+    agentBroadcast(tabId, '[Agent] Chunking', initModel.label);
     let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey);
     if (!chunks?.length) {
         chunks = textBlocks.map(b => ({ text: b.text, tags: [], blockIndices: [b.idx], nearbyImageIdx: null }));
     }
-    agentBroadcast(tabId, '[Agent] Chunks ready', AGENT_MODEL,
+    agentBroadcast(tabId, '[Agent] Chunks ready', initModel.label,
         `${chunks.length} chunks | ${Date.now() - chunkStart}ms`);
 
     // Phase 3: ReAct loop
@@ -335,12 +337,16 @@ async function runAgenticLoop(tabId, payload) {
         const turnStart = Date.now();
 
         // ── Call LLM ─────────────────────────────────────────────────────────
+        // Pick a random model for this turn
+        const turnModel = pickAgentModel();
+        agentBroadcast(tabId, '[Agent] Thinking...', turnModel.label, `Turn ${turn + 1}...`);
+
         let action;
         try {
-            action = await callAgent(messages, geminiApiKey);
+            action = await callAgent(messages, geminiApiKey, turnModel.id);
         } catch (e) {
             console.warn('[agent] LLM error:', e.message);
-            agentBroadcast(tabId, '[Agent] LLM error', AGENT_MODEL, e.message);
+            agentBroadcast(tabId, '[Agent] LLM error', turnModel.label, e.message);
             break;
         }
         const llmMs = Date.now() - turnStart;
@@ -349,7 +355,7 @@ async function runAgenticLoop(tabId, payload) {
 
         // ── DONE ─────────────────────────────────────────────────────────────
         if (tool === 'DONE') {
-            agentBroadcast(tabId, '[Agent] Complete', AGENT_MODEL,
+            agentBroadcast(tabId, '[Agent] Complete', turnModel.label,
                 `${turn} turns | ${Date.now() - loopStart}ms total`);
             messages.push({ role: 'model', text: JSON.stringify(action) });
             break;
@@ -374,6 +380,7 @@ async function runAgenticLoop(tabId, payload) {
             tool,
             thought: thought || '',
             nextStep: nextStep || '',
+            model: turnModel.label,
             input: args || {},
             result,
             llmMs,
@@ -397,7 +404,7 @@ async function runAgenticLoop(tabId, payload) {
         }
 
         // ── Broadcast with timing ────────────────────────────────────────────
-        agentBroadcast(tabId, `${chunkRef} ${tool}`, AGENT_MODEL,
+        agentBroadcast(tabId, `${chunkRef} ${tool}`, turnModel.label,
             `${totalMs}ms (llm:${llmMs} tool:${toolMs}) | next: ${preview(nextStep, 6)}`);
 
         // ── Feed back to LLM ─────────────────────────────────────────────────
@@ -456,14 +463,15 @@ async function runAgenticLoop(tabId, payload) {
         () => { chrome.runtime.lastError; }
     );
 
-    agentBroadcast(tabId, '[Agent] Handoff', AGENT_MODEL,
+    agentBroadcast(tabId, '[Agent] Handoff', initModel.label,
         `${validResults.length}/${chunkResults.length} valid | ${Date.now() - loopStart}ms`);
 }
 
 // ── Semantic chunk identification ────────────────────────────────────────────
 
 async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${AGENT_MODEL}:generateContent?key=${geminiApiKey}`;
+    const chunkModelId = pickAgentModel().id;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${chunkModelId}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `You are a semantic content analyzer. Group the following text blocks into logical learning chunks.
 

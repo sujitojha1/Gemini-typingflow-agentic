@@ -21,15 +21,33 @@ function extractPageContent() {
         });
 
     let structuredPayload = [];
+    let totalWords = 0;
     elements.forEach(el => {
         if (el.tagName === 'IMG') {
             const src = el.src || el.dataset.src;
             if (src && !src.startsWith('data:')) structuredPayload.push({ type: 'image', src: src });
         } else {
-            structuredPayload.push({ type: 'text', content: el.innerText.trim() });
+            const txt = el.innerText.trim();
+            totalWords += txt.split(/\s+/).length;
+            structuredPayload.push({ type: 'text', content: txt });
         }
     });
-    return structuredPayload;
+
+    const readability = calculateReadability(elements.map(el => el.innerText || '').join(' '), totalWords);
+    return { payload: structuredPayload, readability };
+}
+
+function calculateReadability(fullText, wordCount) {
+    if (!wordCount) return { time: 0, complexity: 'N/A' };
+    const sentences = fullText.split(/[.!?]+/).filter(s => s.trim().length > 0).length || 1;
+    const avgSentenceLength = wordCount / sentences;
+    const readTime = Math.ceil(wordCount / 200);
+    
+    let complexity = 'Medium';
+    if (avgSentenceLength < 14) complexity = 'Simple';
+    else if (avgSentenceLength > 24) complexity = 'Complex';
+
+    return { time: readTime, complexity, wordCount };
 }
 
 // -------------------------------------------------------------
@@ -267,66 +285,106 @@ const INJECT_CSS = `
   .tf-coverage-bar { display: inline-block; width: 80px; height: 4px; background: #222; border-radius: 2px; vertical-align: middle; margin: 0 6px; position: relative; overflow: hidden; }
   .tf-coverage-fill { position: absolute; left: 0; top: 0; height: 100%; background: #27c93f; border-radius: 2px; }
 
+  .tf-readability-chip { 
+    display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04); 
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; color: #777; font-family: 'Menlo', monospace; 
+  }
+  .tf-readability-val { color: #E1C04C; font-weight: 700; }
+  .tf-complexity-Simple { color: #27c93f; }
+  .tf-complexity-Medium { color: #E1C04C; }
+  .tf-complexity-Complex { color: #ff5555; }
+
   .tf-log-btn { background: rgba(74, 140, 212, 0.1); border: 1px solid rgba(74, 140, 212, 0.4); color: #4a8cd4; font-size: 11px; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-family: 'Menlo', monospace; margin-left: 15px; transition: all 0.15s; }
-  .tf-log-btn:hover { background: rgba(74, 140, 212, 0.25); border-color: #4a8cd4; }
-  .tf-log-modal { position: absolute; inset: 40px 30px; background: #0d0d12; border: 1px solid rgba(255,255,255,0.08); z-index: 100; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.9); animation: fade-in 0.25s; }
-  .tf-log-modal-hdr { padding: 14px 22px; background: rgba(20,20,28,0.95); border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-  .tf-log-title { color: #ECEBDE; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-  .tf-log-title-pip { width: 6px; height: 6px; border-radius: 50%; background: #27c93f; }
-  .tf-log-stats { color: #555; font-size: 11px; font-family: 'Menlo', monospace; }
-  .tf-log-close { cursor: pointer; color: #555; font-size: 20px; line-height: 1; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.15s; }
+  .tf-log-btn:hover { background: rgba(74, 140, 212, 0.25); border-color: #4a8cd4; box-shadow: 0 0 10px rgba(74, 140, 212, 0.2); }
+  
+  .tf-log-modal { 
+    position: absolute; inset: 40px 30px; background: rgba(13, 13, 18, 0.94); backdrop-filter: blur(24px); 
+    border: 1px solid rgba(255,255,255,0.08); z-index: 100; border-radius: 12px; display: flex; flex-direction: column; 
+    overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.03); 
+    animation: tf-modal-in 0.4s cubic-bezier(0.16, 1, 0.3, 1); 
+  }
+  @keyframes tf-modal-in { from { opacity: 0; transform: scale(0.98) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+  .tf-log-modal-hdr { 
+    padding: 16px 24px; background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(255,255,255,0.06); 
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; 
+  }
+  .tf-log-title { color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 10px; font-family: 'Inter', sans-serif; }
+  .tf-log-title-pip { width: 8px; height: 8px; border-radius: 50%; background: #27c93f; box-shadow: 0 0 8px rgba(39, 201, 63, 0.4); }
+  .tf-log-stats { color: #777; font-size: 11px; font-family: 'Menlo', monospace; background: rgba(255,255,255,0.03); padding: 4px 10px; border-radius: 4px; }
+  
+  .tf-log-dl-btn { background: none; border: 1px solid rgba(255,255,255,0.1); color: #888; font-size: 10px; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-family: 'Menlo', monospace; transition: all 0.2s; }
+  .tf-log-dl-btn:hover { border-color: #4a8cd4; color: #4a8cd4; background: rgba(74, 140, 212, 0.05); }
+
+  .tf-log-close { cursor: pointer; color: #555; font-size: 20px; line-height: 1; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px; transition: all 0.2s; margin-left: 8px; }
   .tf-log-close:hover { color: #fff; background: rgba(255,255,255,0.08); }
-  .tf-log-body { padding: 16px 22px; overflow-y: auto; flex: 1; }
+  
+  .tf-log-body { padding: 24px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+  .tf-log-body::-webkit-scrollbar { width: 6px; }
+  .tf-log-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
 
-  .tf-log-chunk { margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.01); }
-  .tf-log-chunk-hdr { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; cursor: pointer; user-select: none; transition: background 0.15s; }
-  .tf-log-chunk-hdr:hover { background: rgba(255,255,255,0.03); }
-  .tf-log-chunk-title { display: flex; align-items: center; gap: 10px; }
-  .tf-log-chunk-arrow { color: #444; font-size: 10px; transition: transform 0.2s; }
-  .tf-log-chunk.open .tf-log-chunk-arrow { transform: rotate(90deg); }
-  .tf-log-chunk-idx { color: #E1C04C; font-size: 12px; font-weight: 600; font-family: 'Menlo', monospace; }
-  .tf-log-chunk-label { color: #888; font-size: 11px; font-family: 'Menlo', monospace; }
-  .tf-log-chunk-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .tf-log-badge { font-size: 10px; padding: 2px 7px; border-radius: 3px; font-family: 'Menlo', monospace; }
-  .tf-log-badge-score { background: rgba(225,192,76,0.12); color: #E1C04C; }
-  .tf-log-badge-cov { background: rgba(39,201,63,0.1); color: #27c93f; }
-  .tf-log-badge-skip { background: rgba(255,85,85,0.1); color: #ff5555; }
-  .tf-log-badge-ok { background: rgba(74,140,212,0.1); color: #4a8cd4; }
-  .tf-log-badge-time { background: rgba(255,255,255,0.04); color: #666; }
-  .tf-log-chunk-steps { display: none; padding: 0 16px 12px; }
-  .tf-log-chunk.open .tf-log-chunk-steps { display: block; }
+  .tf-log-chunk { margin-bottom: 16px; border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden; background: rgba(255,255,255,0.015); transition: border-color 0.2s; }
+  .tf-log-chunk.open { border-color: rgba(74, 140, 212, 0.3); background: rgba(255,255,255,0.02); }
+  .tf-log-chunk-hdr { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; cursor: pointer; user-select: none; transition: background 0.2s; }
+  .tf-log-chunk-hdr:hover { background: rgba(255,255,255,0.04); }
+  
+  .tf-log-chunk-title { display: flex; align-items: center; gap: 12px; }
+  .tf-log-chunk-arrow { color: #444; font-size: 9px; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+  .tf-log-chunk.open .tf-log-chunk-arrow { transform: rotate(90deg); color: #4a8cd4; }
+  .tf-log-chunk-idx { color: #E1C04C; font-size: 13px; font-weight: 600; font-family: 'Menlo', monospace; }
+  .tf-log-chunk-label { color: #555; font-size: 11px; font-family: 'Menlo', monospace; }
+  
+  .tf-log-chunk-badges { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .tf-log-badge { font-size: 10px; padding: 3px 8px; border-radius: 4px; font-family: 'Menlo', monospace; font-weight: 500; }
+  .tf-log-badge-score { background: rgba(225,192,76,0.15); color: #f5d76e; border: 1px solid rgba(225,192,76,0.1); }
+  .tf-log-badge-cov { background: rgba(39,201,63,0.12); color: #4ade80; border: 1px solid rgba(39,201,63,0.1); }
+  .tf-log-badge-skip { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.1); }
+  .tf-log-badge-ok { background: rgba(74, 140, 212, 0.15); color: #60a5fa; border: 1px solid rgba(74,140,212,0.1); }
+  .tf-log-badge-time { background: rgba(255,255,255,0.05); color: #9ca3af; border: 1px solid rgba(255,255,255,0.05); }
 
-  .tf-log-step { display: flex; gap: 0; margin-bottom: 2px; position: relative; }
-  .tf-log-step-line { position: absolute; left: 14px; top: 24px; bottom: -2px; width: 1px; background: rgba(255,255,255,0.04); }
+  .tf-log-chunk-steps { display: none; padding: 0 20px 16px 48px; border-top: 1px solid rgba(255,255,255,0.03); margin-top: -1px; }
+  .tf-log-chunk.open .tf-log-chunk-steps { display: block; animation: tf-slide-down 0.3s ease-out; }
+  @keyframes tf-slide-down { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+  .tf-log-step { display: flex; gap: 0; margin-bottom: 4px; position: relative; animation: tf-step-in 0.4s both; }
+  @keyframes tf-step-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+  
+  .tf-log-step-line { position: absolute; left: -26px; top: 26px; bottom: -8px; width: 1.5px; background: rgba(255,255,255,0.05); }
   .tf-log-step:last-child .tf-log-step-line { display: none; }
-  .tf-log-step-dot { flex-shrink: 0; width: 28px; display: flex; justify-content: center; padding-top: 7px; }
-  .tf-log-step-dot-inner { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid #333; background: #0d0d12; z-index: 1; }
-  .tf-log-step.done .tf-log-step-dot-inner { background: #27c93f; border-color: #27c93f; }
-  .tf-log-step.skipped .tf-log-step-dot-inner { background: #555; border-color: #555; }
-  .tf-log-step-content { flex: 1; padding: 4px 0 10px; min-width: 0; }
-  .tf-log-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; flex-wrap: wrap; }
-  .tf-log-tool-name { font-size: 12px; font-weight: 600; color: #ECEBDE; font-family: 'Menlo', monospace; }
-  .tf-log-tool-tag { font-size: 9px; padding: 1px 6px; border-radius: 3px; font-family: 'Menlo', monospace; letter-spacing: 0.3px; }
-  .tf-log-tool-tag.relevance { background: rgba(255,189,46,0.12); color: #ffbd2e; }
-  .tf-log-tool-tag.image { background: rgba(155,89,182,0.15); color: #bb86fc; }
-  .tf-log-tool-tag.stats { background: rgba(74,140,212,0.12); color: #4a8cd4; }
-  .tf-log-tool-tag.eval { background: rgba(225,192,76,0.12); color: #E1C04C; }
-  .tf-log-tool-tag.grammar { background: rgba(39,201,63,0.1); color: #27c93f; }
-  .tf-log-tool-tag.refine { background: rgba(255,85,85,0.1); color: #ff5555; }
-  .tf-log-tool-tag.coverage { background: rgba(74,140,212,0.1); color: #6cb4ee; }
-  .tf-log-time { font-size: 9px; color: #444; font-family: 'Menlo', monospace; margin-left: auto; }
-  .tf-log-time-fast { color: #27c93f; }
-  .tf-log-time-mid { color: #E1C04C; }
-  .tf-log-time-slow { color: #ff5555; }
-  .tf-log-thought { font-size: 11px; color: #6b7280; font-style: italic; line-height: 1.5; margin-bottom: 3px; padding-left: 2px; }
-  .tf-log-next { font-size: 10px; color: #4a8cd4; line-height: 1.4; margin-top: 3px; padding-left: 2px; }
-  .tf-log-next::before { content: '→ '; color: #333; }
-  .tf-log-output { font-size: 11px; color: #777; font-family: 'Menlo', monospace; line-height: 1.5; padding-left: 2px; margin-top: 2px; }
-  .tf-log-output-label { color: #444; }
-  .tf-log-output-val { color: #888; }
-  .tf-log-output-val.ok { color: #27c93f; }
-  .tf-log-output-val.warn { color: #ff5555; }
-  .tf-log-output-val.highlight { color: #E1C04C; }
+  
+  .tf-log-step-dot { position: absolute; left: -31px; top: 7px; width: 11px; height: 11px; display: flex; justify-content: center; align-items: center; }
+  .tf-log-step-dot-inner { width: 8px; height: 8px; border-radius: 50%; border: 2px solid #333; background: #0d0d12; box-shadow: 0 0 0 3px #0d0d12; }
+  .tf-log-step.done .tf-log-step-dot-inner { background: #27c93f; border-color: #27c93f; box-shadow: 0 0 8px rgba(39, 201, 63, 0.3), 0 0 0 3px #0d0d12; }
+  .tf-log-step.skipped .tf-log-step-dot-inner { background: #444; border-color: #444; box-shadow: 0 0 0 3px #0d0d12; }
+
+  .tf-log-step-content { flex: 1; padding: 2px 0 14px; min-width: 0; }
+  .tf-log-step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+  .tf-log-tool-name { font-size: 12px; font-weight: 600; color: #fff; font-family: 'Menlo', monospace; }
+  .tf-log-tool-tag { font-size: 9px; padding: 2px 7px; border-radius: 4px; font-family: 'Menlo', monospace; letter-spacing: 0.4px; text-transform: uppercase; font-weight: 700; }
+  
+  .tf-log-tool-tag.relevance { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .tf-log-tool-tag.image     { background: rgba(167,139,250,0.15); color: #a78bfa; }
+  .tf-log-tool-tag.stats     { background: rgba(96,165,250,0.15); color: #60a5fa; }
+  .tf-log-tool-tag.eval      { background: rgba(245,158,11,0.15); color: #f59e0b; }
+  .tf-log-tool-tag.grammar   { background: rgba(52,211,153,0.15); color: #34d399; }
+  .tf-log-tool-tag.refine    { background: rgba(248,113,113,0.15); color: #f87171; }
+  .tf-log-tool-tag.coverage  { background: rgba(56,189,248,0.15); color: #38bdf8; }
+  
+  .tf-log-time { font-size: 9px; color: #555; font-family: 'Menlo', monospace; margin-left: auto; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px; }
+  .tf-log-time-fast { color: #4ade80; }
+  .tf-log-time-mid  { color: #fbbf24; }
+  .tf-log-time-slow { color: #f87171; }
+  
+  .tf-log-thought { font-size: 11px; color: #9ca3af; font-style: italic; line-height: 1.6; margin-bottom: 5px; background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 6px; border-left: 2px solid rgba(255,255,255,0.05); }
+  .tf-log-next { font-size: 10px; color: #60a5fa; line-height: 1.5; margin-top: 5px; opacity: 0.8; }
+  .tf-log-next::before { content: 'NEXT › '; color: #4b5563; font-weight: 700; font-size: 8px; }
+  
+  .tf-log-output { font-size: 11px; color: #d1d5db; font-family: 'Menlo', monospace; line-height: 1.6; padding: 6px 12px; background: rgba(0,0,0,0.2); border-radius: 6px; margin-top: 4px; }
+  .tf-log-output-label { color: #6b7280; margin-right: 6px; font-weight: 700; font-size: 9px; text-transform: uppercase; }
+  .tf-log-output-val { color: #9ca3af; }
+  .tf-log-output-val.ok { color: #34d399; }
+  .tf-log-output-val.warn { color: #f87171; }
+  .tf-log-output-val.highlight { color: #fbbf24; }
 `;
 
 function agentBarHTML() {
@@ -384,6 +442,25 @@ function renderNuggetGallery() {
     const sub = document.getElementById('tf-gallery-sub');
     const refinedLabel = sessionData.isAgentRefined ? ' · ✦ refined by Agent' : (sessionData.isGemmaRefined ? ' · ✦ refined by Gemma 4' : '');
     sub.textContent = `${sessionData.nuggets.length} fragments${refinedLabel} · click any to type`;
+
+    if (sessionData.readability) {
+        const r = sessionData.readability;
+        const rBox = document.createElement('div');
+        rBox.className = 'tf-gallery-meta';
+        rBox.style.marginTop = '8px';
+        rBox.innerHTML = `
+            <div class="tf-readability-chip">
+                <span>time: <span class="tf-readability-val">~${r.time} min</span></span>
+            </div>
+            <div class="tf-readability-chip">
+                <span>complexity: <span class="tf-readability-val tf-complexity-${r.complexity}">${r.complexity}</span></span>
+            </div>
+            <div class="tf-readability-chip">
+                <span>words: <span class="tf-readability-val">${r.wordCount}</span></span>
+            </div>
+        `;
+        sub.parentNode.insertBefore(rBox, sub.nextSibling);
+    }
 
     // Star rating
     const rating = sessionData.star_rating;
@@ -599,6 +676,7 @@ function _buildStepHTML(step, idx) {
             <div class="tf-log-step-head">
                 <span class="tf-log-tool-name">${_esc(step.tool)}</span>
                 <span class="tf-log-tool-tag ${_toolTag(step.tool)}">${_toolLabel(step.tool)}</span>
+                ${step.model ? `<span class="tf-log-badge tf-log-badge-time">${_esc(step.model)}</span>` : ''}
                 ${isSkipped ? '<span class="tf-log-badge tf-log-badge-skip">skipped</span>' : ''}
                 ${timeHTML}
             </div>
@@ -673,8 +751,9 @@ function showLogModal() {
     modal.innerHTML = `
         <div class="tf-log-modal-hdr">
             <div class="tf-log-title"><div class="tf-log-title-pip"></div>Agent Process Logs</div>
-            <div style="display:flex; align-items:center; gap:16px;">
+            <div style="display:flex; align-items:center; gap:12px;">
                 <span class="tf-log-stats">${pipelineLabel}</span>
+                <button class="tf-log-dl-btn" id="tf-log-dl-json">Download JSON</button>
                 <div class="tf-log-close" id="tf-log-close">&times;</div>
             </div>
         </div>
@@ -683,6 +762,14 @@ function showLogModal() {
 
     overlayWrapper.appendChild(modal);
     document.getElementById('tf-log-close').addEventListener('click', () => modal.remove());
+    
+    document.getElementById('tf-log-dl-json').addEventListener('click', () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(sessionData, null, 2));
+        const dlAnchorElem = document.createElement('a');
+        dlAnchorElem.setAttribute("href",     dataStr     );
+        dlAnchorElem.setAttribute("download", `agent_process_log_${sessionData.sessionId || 'trace'}.json`);
+        dlAnchorElem.click();
+    });
 
     modal.querySelectorAll('.tf-log-chunk-hdr').forEach(hdr => {
         hdr.addEventListener('click', () => {

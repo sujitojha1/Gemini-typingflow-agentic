@@ -4,7 +4,7 @@ async function toolCheckRelevance({ text }) {
         return { isAd: false, reason: 'No API key', error: true };
     }
 
-    const modelId = 'gemini-3.1-flash-lite-preview';
+    const modelId = pickAgentModel().id;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Analyze the following text chunk and determine if it is an advertisement, sponsored content, site navigation, cookie notice, or irrelevant boilerplate that should not be part of a learning session. Return ONLY valid JSON matching the schema exactly.

@@ -2,7 +2,7 @@ async function toolExtractSubject({ text }) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return { subject: 'Untitled' };
 
-    const modelId = 'gemini-3.1-flash-lite-preview';
+    const modelId = pickAgentModel().id;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Extract a concise subject title (4–8 words) for this learning chunk. Return ONLY valid JSON: {"subject":"<title>"}

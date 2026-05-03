@@ -4,7 +4,7 @@ async function toolCheckGrammar({ text }) {
         return { isProper: true, issues: 'No API key', error: true };
     }
 
-    const modelId = 'gemini-3.1-flash-lite-preview';
+    const modelId = pickAgentModel().id;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Evaluate the grammar, spelling, and sentence structure of the following text chunk. Determine if the grammar is proper and acceptable for a learning session. If there are noticeable errors, typos, or awkward phrasing, mark it as not proper and list the issues. Return ONLY valid JSON matching the schema exactly.
