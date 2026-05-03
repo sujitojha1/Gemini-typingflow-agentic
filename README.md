@@ -13,9 +13,10 @@ Popup opens
 User clicks "Process Page Intelligence"
   → content.js extracts text blocks + image URLs from the page
   → Track 1 (Normal Process): Primary Model Pool called immediately to generate chunks → gallery opens → popup closes
-  → Track 2 (Agentic Process): Parallel agent loops trigger asynchronously in background
-      → runs a multi-step toolchain: relevance checking (ad filtering), subject extraction, evaluation, grammar checking, conditional refinement, image matching/generation
-      → on completion → extension switches to the later chunks
+  → Track 2 (Agentic Process): LLM-driven ReAct loop triggers asynchronously in background
+      → system prompt + tool definitions → LLM generates { thought, tool, args } → runtime executes → result fed back
+      → loops per-chunk: checkRelevance → image → stats → evaluation → grammar → refinement → coverage
+      → on completion → extension switches to the refined chunks
       → toast: "✦ Agent refined your nuggets" → gallery updates in place
 
 User clicks any nugget card
@@ -36,10 +37,11 @@ TypingFlow utilizes a dual-track architecture triggered simultaneously when you 
    - Fast initial chunking that structures the page intelligence and generates the first set of chunks using the primary model pool (e.g., `gemini-3.1-flash-lite-preview`).
    - Blocks the UI briefly (~2s) and mounts the gallery immediately for instant user interaction.
 
-2. **Track 2: Agentic Process (Parallel Async Loop)**
+2. **Track 2: Agentic Process (ReAct Loop)**
    - Triggers asynchronously in the background.
-   - Executes a 4-phase agentic workflow: Session & Content Indexing, Semantic Chunk Identification, Parallel Agent Loops (invoking tools like `checkRelevance`, `checkGrammar`, `evaluateChunk`, `refineChunk`), and State Handoff.
-   - Once the agent processing is done, the extension seamlessly **switches to the later chunks**, updating the gallery live with a toast notification. Both versions are preserved in session state. Users can click the "view agent logs" button to inspect the detailed tool call history for each chunk.
+   - Uses a **ReAct (Reasoning + Acting)** pattern: a system prompt provides the LLM with all available tools and the full plan. The LLM generates `{ thought, tool, args }`, the runtime executes the tool, feeds the result back, and the LLM decides the next step — looping until it emits `DONE`.
+   - Processes each chunk through: `checkRelevance` → `findMatchingImage`/`generateChunkImage` → `getChunkStats` → `extractSubject` → `evaluateChunk` → `checkGrammar` → `refineChunk` (conditional) → `updateCoverage`.
+   - Once complete, the extension seamlessly **switches to the refined chunks**, updating the gallery live with a toast notification. Users can click "view agent logs" to inspect the full tool call history per chunk.
 
 ### Agentic Page Intelligence
 The popup runs a lightweight DOM scan the instant it opens — before any API call — and surfaces two real-time chips:

@@ -88,7 +88,7 @@ Displayed in a `page-meta` row between the header and action buttons, alongside 
 
 ### Tweak 2 — Dual-Track Agentic Workflow ✅
 
-Two processes run on every extraction. The user sees the deterministic Normal Process results immediately, while the Agentic Process refines them in the background via a multi-step toolchain without blocking the UI.
+Two processes run on every extraction. The user sees the deterministic Normal Process results immediately, while the Agentic Process refines them in the background via a **ReAct (Reasoning + Acting)** agent loop without blocking the UI.
 
 **Flow:**
 
@@ -98,17 +98,20 @@ User clicks Process Page Intelligence
 DOM extracted (text blocks + image URLs)
   ↓
 ┌─────────────────────────────────┐   ┌──────────────────────────────────────────────┐
-│ Track 1: Normal Process         │   │ Track 2: Agentic Process                     │
-│ (Primary Model Pool)            │   │ (4-Phase Async Pipeline)                     │
-│                                 │   │                                              │
-│ Fast text-only structuring      │   │ 1. Session & Content Indexing                │
-│ ~2s                             │   │ 2. Semantic Chunk Identification             │
-│                                 │   │ 3. Parallel Agent Loops (per chunk)          │
-│                                 │   │    • checkRelevance (ad filter)              │
-│                                 │   │    • Image matching / generation             │
-│                                 │   │    • getChunkStats, extractSubject           │
-│                                 │   │    • evaluateChunk, checkGrammar             │
-│                                 │   │    • refineChunk, updateCoverage             │
+│ Track 1: Normal Process         │   │ Track 2: Agentic Process (ReAct Loop)        │
+│ (Primary Model Pool)            │   │                                              │
+│                                 │   │ 1. Session & Content Indexing                │
+│ Fast text-only structuring      │   │ 2. Semantic Chunk Identification             │
+│ ~2s                             │   │ 3. ReAct Loop:                               │
+│                                 │   │    system_prompt(tools, plan, chunks)         │
+│                                 │   │      ↓                                       │
+│                                 │   │    LLM → { thought, tool, args }             │
+│                                 │   │      ↓                                       │
+│                                 │   │    Runtime executes tool(args)               │
+│                                 │   │      ↓                                       │
+│                                 │   │    Result fed back to LLM                    │
+│                                 │   │      ↓                                       │
+│                                 │   │    Loop until LLM emits { tool: "DONE" }     │
 │                                 │   │ 4. State Handoff                             │
 └────────────┬────────────────────┘   └───────────────┬──────────────────────────────┘
              ↓                                        ↓
@@ -123,8 +126,8 @@ DOM extracted (text blocks + image URLs)
                                              • gallery re-renders if open
 ```
 
-**Why an Agentic Loop for re-chunking:**
-The agent runs an independent async loop per chunk. It checks relevance to filter ads and boilerplate, extracts subjects, evaluates chunk quality, checks grammar, optionally refines the text if the grammar is not proper (enforcing < 300 words limit), and dynamically matches or generates images contextually. This ensures the nuggets are deeply synthesized rather than just structured.
+**Why a ReAct Loop:**
+Instead of hardcoded sequential steps, the LLM itself drives the pipeline. A system prompt provides the full plan, available tools (checkRelevance, findMatchingImage, generateChunkImage, getChunkStats, extractSubject, evaluateChunk, checkGrammar, refineChunk, updateCoverage), and chunk data. The LLM generates `{ thought, tool, args }` each turn, the runtime executes the tool and feeds the result back. The LLM then reasons about what to do next — skipping refinement if grammar is proper, dropping ad chunks, etc. — until all chunks are processed and it emits `DONE`.
 
 **Session state preservation:**
 Both versions are kept in memory — `sessionData.geminiNuggets` (original) and `sessionData.nuggets` (Agent refined, live after update). The gallery subtitle appends `· ✦ refined by Agent` when the update arrives.
