@@ -261,6 +261,26 @@ const INJECT_CSS = `
   .tf-coverage-fill { position: absolute; left: 0; top: 0; height: 100%; background: #27c93f; border-radius: 2px; }
 `;
 
+function agentBarHTML() {
+    return `<div class="tf-agent-bar tf-agent-active" id="tf-agent-bar">
+        <div class="tf-agent-pip"></div>
+        <span id="tf-agent-task">agent · ready</span>
+        <span class="tf-agent-model-label" id="tf-agent-model"></span>
+    </div>`;
+}
+
+function topbarHTML(title) {
+    return `<div class="tf-topbar">
+        <div class="tf-dots">
+            <div class="tf-dot tf-dot-r"></div>
+            <div class="tf-dot tf-dot-y"></div>
+            <div class="tf-dot tf-dot-g"></div>
+        </div>
+        <div class="tf-title">${title}</div>
+        <div class="tf-close-box" id="tf-close-btn">&times;</div>
+    </div>`;
+}
+
 function mountUI(data) {
     let s = document.getElementById('tf-style');
     if (s) s.remove();
@@ -273,20 +293,8 @@ function mountUI(data) {
 
 function renderNuggetGallery() {
     overlayWrapper.innerHTML = `
-        <div class="tf-agent-bar tf-agent-active" id="tf-agent-bar">
-            <div class="tf-agent-pip"></div>
-            <span id="tf-agent-task">agent · ready</span>
-            <span class="tf-agent-model-label" id="tf-agent-model"></span>
-        </div>
-        <div class="tf-topbar">
-            <div class="tf-dots">
-                <div class="tf-dot tf-dot-r"></div>
-                <div class="tf-dot tf-dot-y"></div>
-                <div class="tf-dot tf-dot-g"></div>
-            </div>
-            <div class="tf-title">~/typingflow</div>
-            <div class="tf-close-box" id="tf-close-btn">&times;</div>
-        </div>
+        ${agentBarHTML()}
+        ${topbarHTML('~/typingflow')}
         <div class="tf-gallery-scroll">
             <div class="tf-gallery-hdr">
                 <div class="tf-gallery-cmd">$ extract --page-nuggets</div>
@@ -413,20 +421,8 @@ function renderCurrentNugget() {
     }).join('');
 
     overlayWrapper.innerHTML = `
-        <div class="tf-agent-bar tf-agent-active" id="tf-agent-bar">
-            <div class="tf-agent-pip"></div>
-            <span id="tf-agent-task">agent · ready</span>
-            <span class="tf-agent-model-label" id="tf-agent-model"></span>
-        </div>
-        <div class="tf-topbar">
-            <div class="tf-dots">
-                <div class="tf-dot tf-dot-r"></div>
-                <div class="tf-dot tf-dot-y"></div>
-                <div class="tf-dot tf-dot-g"></div>
-            </div>
-            <div class="tf-title">typingflow - type</div>
-            <div class="tf-close-box" id="tf-close-btn">&times;</div>
-        </div>
+        ${agentBarHTML()}
+        ${topbarHTML('typingflow - type')}
 
         <div class="tf-stats-bar">
             <div class="tf-nav-btns">

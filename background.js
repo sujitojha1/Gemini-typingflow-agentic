@@ -10,6 +10,17 @@ const MODEL_POOL = [
     { id: 'gemma-4-31b-it',                 label: 'Gemma 4 31B',       vision: true  },
 ];
 
+// Shared base64 encoder — chunked to avoid call-stack overflow on large images
+function arrayBufferToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    const CHUNK = 8192;
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+}
+
 // ── Agent utilities ──────────────────────────────────────────────────────────
 
 function agentBroadcast(tabId, task, model, detail = '') {
@@ -109,14 +120,16 @@ async function runAgentPipeline(tabId) {
     // signal popup to close
     chrome.runtime.sendMessage({ action: 'agent_close_popup' }, () => { chrome.runtime.lastError; });
 
-    // persist session
+    // persist session + nuggets (needed by agent tools)
     await chrome.storage.local.set({
+        tf_agent_nuggets: structureResult.api_response.nuggets || [],
         tf_agent_session: {
             timestamp: Date.now(),
             model: usedModel.label,
             nuggetCount: structureResult.api_response.nuggets?.length,
             tldr: structureResult.api_response.tldr,
             tags: structureResult.api_response.tags,
+            star_rating: structureResult.api_response.star_rating,
         }
     });
 
@@ -241,6 +254,304 @@ async function runAgenticParallelTrack(tabId, payload) {
     }
 }
 
+// ── LLM Response Parser ──────────────────────────────────────────────────────
+
+function parseLLMResponse(text) {
+    text = text.trim();
+    if (text.startsWith('```')) {
+        const lines = text.split('\n');
+        const end = lines[lines.length - 1].trim() === '```' ? lines.length - 1 : lines.length;
+        text = lines.slice(1, end).join('\n').trim();
+        if (text.startsWith('json')) text = text.slice(4).trim();
+    }
+    try { return JSON.parse(text); } catch (_) {}
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) { try { return JSON.parse(m[0]); } catch (_) {} }
+    throw new Error('Cannot parse: ' + text.slice(0, 200));
+}
+
+// ── Safe Math Evaluator (no eval — MV3 CSP compliant) ────────────────────────
+
+function safeEval(expr) {
+    const src = String(expr).replace(/\s+/g, '');
+    let pos = 0;
+
+    const FUNCS = {
+        sqrt: Math.sqrt, abs: Math.abs, round: Math.round, floor: Math.floor,
+        ceil: Math.ceil, sin: Math.sin, cos: Math.cos, tan: Math.tan,
+        log: Math.log, log2: Math.log2, log10: Math.log10, exp: Math.exp,
+        pow: Math.pow, min: (...a) => Math.min(...a), max: (...a) => Math.max(...a),
+        sum: (...a) => a.reduce((x, y) => x + y, 0),
+        sign: Math.sign, trunc: Math.trunc,
+    };
+    const CONSTS = { PI: Math.PI, pi: Math.PI, E: Math.E, e: Math.E };
+
+    function peek()         { return pos < src.length ? src[pos] : null; }
+    function consume(n = 1) { const s = src.slice(pos, pos + n); pos += n; return s; }
+
+    function parseNumber() {
+        const m = src.slice(pos).match(/^\d+(\.\d+)?([eE][+-]?\d+)?/);
+        if (!m) throw new Error('Expected number at: ' + src.slice(pos, pos + 10));
+        pos += m[0].length;
+        return parseFloat(m[0]);
+    }
+    function parseIdent() {
+        const m = src.slice(pos).match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+        if (!m) throw new Error('Expected identifier at: ' + src.slice(pos, pos + 10));
+        pos += m[0].length;
+        return m[0];
+    }
+
+    function parseExpr() { return parseAddSub(); }
+    function parseAddSub() {
+        let v = parseMulDiv();
+        while (pos < src.length && (src[pos] === '+' || src[pos] === '-')) {
+            const op = consume();
+            v = op === '+' ? v + parseMulDiv() : v - parseMulDiv();
+        }
+        return v;
+    }
+    function parseMulDiv() {
+        let v = parsePow();
+        while (pos < src.length &&
+               ((src[pos] === '*' && src[pos + 1] !== '*') || src[pos] === '/' || src[pos] === '%')) {
+            const op = consume();
+            v = op === '*' ? v * parsePow() : op === '/' ? v / parsePow() : v % parsePow();
+        }
+        return v;
+    }
+    function parsePow() {
+        let base = parseUnary();
+        if (pos < src.length && src.slice(pos, pos + 2) === '**') {
+            consume(2);
+            base = Math.pow(base, parseUnary());
+        }
+        return base;
+    }
+    function parseUnary() {
+        if (peek() === '-') { consume(); return -parsePrimary(); }
+        if (peek() === '+') { consume(); return parsePrimary(); }
+        return parsePrimary();
+    }
+    function parsePrimary() {
+        if (peek() === '(') {
+            consume();
+            const v = parseExpr();
+            if (peek() !== ')') throw new Error('Expected )');
+            consume();
+            return v;
+        }
+        if (/\d/.test(peek())) return parseNumber();
+        if (/[a-zA-Z_]/.test(peek())) {
+            const name = parseIdent();
+            if (name in CONSTS) return CONSTS[name];
+            if (peek() === '(') {
+                consume();
+                const args = [];
+                if (peek() !== ')') {
+                    args.push(parseExpr());
+                    while (peek() === ',') { consume(); args.push(parseExpr()); }
+                }
+                if (peek() !== ')') throw new Error('Expected ) after args for ' + name);
+                consume();
+                if (!(name in FUNCS)) throw new Error('Unknown function: ' + name);
+                return FUNCS[name](...args);
+            }
+            throw new Error('Unknown identifier: ' + name);
+        }
+        throw new Error('Unexpected character: ' + peek());
+    }
+
+    const result = parseExpr();
+    if (pos < src.length) throw new Error('Trailing characters: ' + src.slice(pos));
+    return result;
+}
+
+// ── Agent Tools ──────────────────────────────────────────────────────────────
+
+function toolCalculate({ expression }) {
+    try {
+        const result = safeEval(String(expression));
+        return JSON.stringify({ result: String(result) });
+    } catch (e) {
+        return JSON.stringify({ error: 'Calculation failed: ' + e.message });
+    }
+}
+
+async function toolSearchNuggets({ query }) {
+    const { tf_agent_nuggets } = await chrome.storage.local.get('tf_agent_nuggets');
+    if (!tf_agent_nuggets?.length) return JSON.stringify({ results: 'No page has been processed yet.' });
+    const q = String(query).toLowerCase();
+    const hits = tf_agent_nuggets.filter(n => n.text.toLowerCase().includes(q));
+    return JSON.stringify({
+        results: hits.length ? hits.map(n => n.text.slice(0, 300)) : 'No matching nuggets found.'
+    });
+}
+
+async function toolSummarizePage() {
+    const { tf_agent_session } = await chrome.storage.local.get('tf_agent_session');
+    if (!tf_agent_session) return JSON.stringify({ error: 'No page has been processed yet.' });
+    return JSON.stringify({
+        tldr: tf_agent_session.tldr,
+        tags: tf_agent_session.tags,
+        star_rating: tf_agent_session.star_rating,
+        nugget_count: tf_agent_session.nuggetCount,
+    });
+}
+
+async function toolLookupDefinition({ term }) {
+    const { tf_agent_nuggets } = await chrome.storage.local.get('tf_agent_nuggets');
+    if (!tf_agent_nuggets?.length) return JSON.stringify({ results: 'No page has been processed yet.' });
+    const t = String(term).toLowerCase();
+    const sentences = [];
+    for (const n of tf_agent_nuggets) {
+        for (const s of n.text.split(/[.!?]+/).map(s => s.trim()).filter(Boolean)) {
+            if (s.toLowerCase().includes(t)) sentences.push(s);
+        }
+    }
+    return JSON.stringify({
+        results: sentences.length ? sentences.slice(0, 5) : `No definition found for "${term}".`
+    });
+}
+
+const AGENT_TOOLS = {
+    calculate:        toolCalculate,
+    searchNuggets:    toolSearchNuggets,
+    summarizePage:    toolSummarizePage,
+    lookupDefinition: toolLookupDefinition,
+};
+
+// ── Agent System Prompt ──────────────────────────────────────────────────────
+
+const AGENT_SYSTEM_PROMPT = `You are a helpful AI agent that can use tools to answer questions about web page content.
+
+You have access to the following tools:
+
+1. calculate(expression: string)
+   Evaluate a math expression. Supports: +, -, *, /, **, %, sqrt, abs, round, floor, ceil, sin, cos, tan, log, exp, pow, min, max, sum.
+   Example: calculate({"expression": "sum(exp(1), exp(1), exp(2), exp(3), exp(5), exp(8))"})
+
+2. searchNuggets(query: string)
+   Search the structured knowledge nuggets extracted from the current page.
+   Example: searchNuggets({"query": "transformer attention"})
+
+3. summarizePage({})
+   Get the TL;DR and tags for the current page.
+   Example: summarizePage({})
+
+4. lookupDefinition(term: string)
+   Find sentences in the page that explain a specific term or concept.
+   Example: lookupDefinition({"term": "backpropagation"})
+
+Respond in ONE of these two JSON formats ONLY:
+
+To call a tool:
+{"tool_name": "<name>", "tool_arguments": {"<arg>": "<value>"}}
+
+To give the final answer:
+{"answer": "<your complete answer>"}
+
+RULES: Respond with ONLY the JSON. No markdown, no extra text. Use tools for page info and math. ALWAYS use calculate for numbers.`;
+
+// ── Agent Loop ───────────────────────────────────────────────────────────────
+
+async function runAgentLoop(tabId, userQuery, maxIter = 6) {
+    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
+    if (!geminiApiKey) {
+        chrome.runtime.sendMessage({ action: 'agent_loop_step', step: { type: 'error', text: 'API key not configured' } }, () => { chrome.runtime.lastError; });
+        return;
+    }
+
+    const modelId = 'gemini-3.1-flash-lite-preview';
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+
+    const messages = [
+        { role: 'system', content: AGENT_SYSTEM_PROMPT },
+        { role: 'user',   content: userQuery },
+    ];
+
+    agentBroadcast(tabId, 'agent loop: starting', modelId);
+
+    for (let iter = 0; iter < maxIter; iter++) {
+        let prompt = '';
+        for (const msg of messages) {
+            if      (msg.role === 'system')    prompt += msg.content + '\n\n';
+            else if (msg.role === 'user')      prompt += `User: ${msg.content}\n\n`;
+            else if (msg.role === 'assistant') prompt += `Assistant: ${msg.content}\n\n`;
+            else if (msg.role === 'tool')      prompt += `Tool Result: ${msg.content}\n\n`;
+        }
+
+        let responseText;
+        try {
+            const res = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error?.message || res.statusText);
+            }
+            const data = await res.json();
+            responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!responseText) throw new Error('Empty response from LLM');
+        } catch (e) {
+            chrome.runtime.sendMessage({ action: 'agent_loop_step', step: { type: 'error', text: e.message } }, () => { chrome.runtime.lastError; });
+            return;
+        }
+
+        let parsed;
+        try {
+            parsed = parseLLMResponse(responseText);
+        } catch (_) {
+            messages.push({ role: 'assistant', content: responseText });
+            messages.push({ role: 'user',      content: 'Please respond with valid JSON only. No markdown, no extra text.' });
+            continue;
+        }
+
+        if (parsed.answer) {
+            chrome.runtime.sendMessage({
+                action: 'agent_loop_step',
+                step: { type: 'answer', text: parsed.answer, iteration: iter + 1 }
+            }, () => { chrome.runtime.lastError; });
+            agentBroadcast(tabId, 'agent loop: complete', modelId);
+            return;
+        }
+
+        if (parsed.tool_name) {
+            const toolName = parsed.tool_name;
+            const toolArgs = parsed.tool_arguments || {};
+
+            if (!(toolName in AGENT_TOOLS)) {
+                const errMsg = JSON.stringify({ error: `Unknown tool: ${toolName}. Available: ${Object.keys(AGENT_TOOLS).join(', ')}` });
+                messages.push({ role: 'assistant', content: responseText });
+                messages.push({ role: 'tool',      content: errMsg });
+                continue;
+            }
+
+            agentBroadcast(tabId, `loop: ${toolName}`, modelId);
+            const toolResult = await Promise.resolve(AGENT_TOOLS[toolName](toolArgs));
+
+            chrome.runtime.sendMessage({
+                action: 'agent_loop_step',
+                step: { type: 'tool_call', toolName, toolArgs, toolResult, iteration: iter + 1 }
+            }, () => { chrome.runtime.lastError; });
+
+            messages.push({ role: 'assistant', content: responseText });
+            messages.push({ role: 'tool',      content: toolResult });
+            continue;
+        }
+
+        messages.push({ role: 'assistant', content: responseText });
+        messages.push({ role: 'user',      content: 'Please respond with valid JSON only.' });
+    }
+
+    chrome.runtime.sendMessage({
+        action: 'agent_loop_step',
+        step: { type: 'error', text: 'Max iterations reached without a final answer.' }
+    }, () => { chrome.runtime.lastError; });
+}
+
 // ── Message router ───────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -250,11 +561,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     if (request.action === "proxy_gemini_api") {
-        callGeminiAPI(request.payload).then(sendResponse);
+        callGeminiWithModel(request.payload, MODEL_POOL[0]).then(sendResponse);
         return true;
     }
     if (request.action === "generate_image_asset") {
         generateContextualImage(request.payload).then(sendResponse);
+        return true;
+    }
+    if (request.action === "run_agent_loop") {
+        runAgentLoop(request.tabId, request.query);
+        sendResponse({ started: true });
         return true;
     }
 });
@@ -332,14 +648,7 @@ async function callGemmaAPI(payload) {
         imageItems.slice(0, 5).map(async (img) => {
             const r = await fetch(img.src);
             if (!r.ok) throw new Error(`${r.status}`);
-            const buf = await r.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            const CHUNK = 8192;
-            let bin = '';
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-                bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-            }
-            return { mimeType: r.headers.get('content-type') || 'image/jpeg', data: btoa(bin) };
+            return { mimeType: r.headers.get('content-type') || 'image/jpeg', data: arrayBufferToBase64(await r.arrayBuffer()) };
         })
     );
     for (const r of imageResults) {
@@ -373,40 +682,6 @@ async function callGemmaAPI(payload) {
 function isValidHttpUrl(str) {
     try { const u = new URL(str); return u.protocol === 'https:' || u.protocol === 'http:'; }
     catch { return false; }
-}
-
-async function callGeminiAPI(payload) {
-    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
-
-    if (!geminiApiKey) {
-        return { error: "API Key not configured. Please initialize your key in the Options panel." };
-    }
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TEXT_MODEL}:generateContent?key=${geminiApiKey}`;
-    const fullPrompt = SYSTEM_PROMPT + "\n\nRAW SCRAPED CONTENT:\n" + JSON.stringify(payload);
-
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: fullPrompt }] }],
-                generationConfig: { response_mime_type: "application/json" }
-            })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            return { error: `Google API Error (${response.status}): ${errorData.error?.message || response.statusText}` };
-        }
-
-        const data = await response.json();
-        const jsonText = data.candidates[0]?.content?.parts[0]?.text;
-        if (!jsonText) return { error: "Gemini returned an empty response." };
-        return { success: true, api_response: JSON.parse(jsonText) };
-    } catch (error) {
-        return { error: `Network exception in Service Worker: ${error.message}` };
-    }
 }
 
 async function generateContextualImage({ text, tags }) {
@@ -459,12 +734,8 @@ async function fallbackDataUrl(tags) {
     try {
         const r = await fetch(picsumUrl);
         if (!r.ok) throw new Error(`picsum ${r.status}`);
-        const buf = await r.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let bin = '';
-        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
         const mimeType = r.headers.get('content-type') || 'image/jpeg';
-        return `data:${mimeType};base64,${btoa(bin)}`;
+        return `data:${mimeType};base64,${arrayBufferToBase64(await r.arrayBuffer())}`;
     } catch (e) {
         console.error("[typingflow] Fallback image failed:", e.message);
         return null;

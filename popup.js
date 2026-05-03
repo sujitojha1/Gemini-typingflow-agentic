@@ -1,13 +1,17 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const btnExtract = document.getElementById('btn-extract');
-    const btnType = document.getElementById('btn-type');
-    const agentBar = document.getElementById('popup-agent-bar');
-    const agentTask = document.getElementById('popup-agent-task');
-    const agentModel = document.getElementById('popup-agent-model');
-    const btnSettings = document.getElementById('btn-settings');
-    const btnRefresh = document.getElementById('btn-refresh');
-    const statWords = document.getElementById('stat-words');
-    const statImages = document.getElementById('stat-images');
+    const btnExtract      = document.getElementById('btn-extract');
+    const btnType         = document.getElementById('btn-type');
+    const agentBar        = document.getElementById('popup-agent-bar');
+    const agentTask       = document.getElementById('popup-agent-task');
+    const agentModel      = document.getElementById('popup-agent-model');
+    const btnSettings     = document.getElementById('btn-settings');
+    const btnRefresh      = document.getElementById('btn-refresh');
+    const statWords       = document.getElementById('stat-words');
+    const statImages      = document.getElementById('stat-images');
+    const querySection    = document.getElementById('agent-query-section');
+    const queryInput      = document.getElementById('agent-query-input');
+    const btnAsk          = document.getElementById('btn-ask-agent');
+    const chainContainer  = document.getElementById('agent-chain');
 
     btnSettings.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
@@ -39,6 +43,50 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ── Reasoning chain renderer ─────────────────────────────────────────────
+
+    function appendChainCard(step) {
+        const card = document.createElement('div');
+        if (step.type === 'tool_call') {
+            card.className = 'chain-card tool';
+            const argsStr  = JSON.stringify(step.toolArgs || {});
+            let   resultPreview = '';
+            try {
+                const r = JSON.parse(step.toolResult || '{}');
+                resultPreview = r.result ?? r.tldr ?? r.error ?? JSON.stringify(r).slice(0, 120);
+            } catch (_) {
+                resultPreview = String(step.toolResult || '').slice(0, 120);
+            }
+            card.innerHTML = `
+                <div class="chain-hdr">
+                    <span class="chain-name">${step.toolName}()</span>
+                    <span class="chain-iter">iter ${step.iteration}</span>
+                </div>
+                <div class="chain-body">
+                    <div class="chain-args">↳ ${argsStr.slice(0, 100)}</div>
+                    <div class="chain-divider"></div>
+                    <div class="chain-result">← ${resultPreview}</div>
+                </div>`;
+        } else if (step.type === 'answer') {
+            card.className = 'chain-card answer';
+            card.innerHTML = `
+                <div class="chain-hdr">
+                    <span class="chain-name">answer</span>
+                    <span class="chain-iter">iter ${step.iteration}</span>
+                </div>
+                <div class="chain-body">${step.text}</div>`;
+            btnAsk.disabled = false;
+        } else if (step.type === 'error') {
+            card.className = 'chain-card error';
+            card.innerHTML = `
+                <div class="chain-hdr"><span class="chain-name">error</span></div>
+                <div class="chain-body">${step.text}</div>`;
+            btnAsk.disabled = false;
+        }
+        chainContainer.appendChild(card);
+        chainContainer.scrollTop = chainContainer.scrollHeight;
+    }
+
     // Listen for agent status pushed from background
     chrome.runtime.onMessage.addListener((msg) => {
         if (msg.action === 'agent_status') {
@@ -46,6 +94,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (msg.task === 'error') {
                 btnExtract.disabled = false;
             }
+        }
+        if (msg.action === 'agent_loop_step') {
+            appendChainCard(msg.step);
         }
         if (msg.action === 'agent_close_popup') {
             window.close();
@@ -81,6 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!chrome.runtime.lastError && resp && resp.hasSession) {
                 btnType.disabled = false;
                 btnExtract.innerText = "Extract New Insights";
+                querySection.style.display = 'block';
             }
         });
     });
@@ -96,6 +148,21 @@ document.addEventListener('DOMContentLoaded', () => {
             updateAgentBar('Starting agent', null);
             chrome.runtime.sendMessage({ action: 'agent_start', tabId: tabs[0].id });
         });
+    });
+
+    btnAsk.addEventListener('click', () => {
+        const query = queryInput.value.trim();
+        if (!query) return;
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (!tabs || tabs.length === 0) return;
+            btnAsk.disabled = true;
+            chainContainer.innerHTML = '';
+            chrome.runtime.sendMessage({ action: 'run_agent_loop', tabId: tabs[0].id, query });
+        });
+    });
+
+    queryInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') btnAsk.click();
     });
 
     btnType.addEventListener('click', () => {
