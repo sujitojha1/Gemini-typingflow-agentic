@@ -51,9 +51,15 @@ async function extractFromTab(tabId) {
             else resolve(r);
         });
     });
-    await new Promise(r => setTimeout(r, 200));
-    const resp = await tabMessage(tabId, { action: 'extract_content' });
-    return unwrap(resp?.payload);
+    for (let attempt = 0; attempt < 5; attempt++) {
+        await new Promise(r => setTimeout(r, 250));
+        try {
+            const resp = await tabMessage(tabId, { action: 'extract_content' });
+            const result = unwrap(resp?.payload);
+            if (result) return result;
+        } catch (_) {}
+    }
+    return null;
 }
 
 function callModelForStructuring(payload, model) {
@@ -151,7 +157,7 @@ async function runAgentPipeline(tabId) {
         `${nuggets.length} nuggets | ${Date.now() - t0}ms total`);
 
     if (usedModel.id !== GEMMA_MODEL) {
-        runAgenticLoop(tabId, payload);
+        runAgenticLoop(tabId, payload, sessionId);
     }
 }
 
@@ -162,7 +168,7 @@ async function runAgentPipeline(tabId) {
 
 // Agent model pool (AGENT_MODEL_POOL, pickAgentModel) defined in background.js globals
 
-const MAX_TURNS = 80;
+const MAX_TURNS = 25;
 const CONTEXT_WINDOW = 12;
 
 // ── System prompt ────────────────────────────────────────────────────────────
@@ -329,7 +335,7 @@ function summarizeResult(tool, result) {
 
 // ── The main ReAct loop ──────────────────────────────────────────────────────
 
-async function runAgenticLoop(tabId, payload) {
+async function runAgenticLoop(tabId, payload, sessionId) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return;
 
@@ -338,7 +344,6 @@ async function runAgenticLoop(tabId, payload) {
     agentBroadcast(tabId, '[Agent] Init', initModel.label);
 
     // Phase 1: Index
-    const sessionId = 'session_' + Date.now();
     const imageIndex = payload
         .filter(p => p.type === 'image' && isValidHttpUrl(p.src))
         .map((img, idx) => ({ idx, src: img.src }));
@@ -557,13 +562,13 @@ Return ONLY valid JSON:
 Rules: group related consecutive blocks; each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
 
     const triedIds = new Set();
-    const MAX_MODEL_RETRIES = CHUNKING_MODEL_POOL.length + 1;
+    const MAX_MODEL_RETRIES = AGENT_MODEL_POOL.length + 1;
 
     for (let attempt = 0; attempt < MAX_MODEL_RETRIES; attempt++) {
-        const candidates = CHUNKING_MODEL_POOL.filter(m => !triedIds.has(m.id));
+        const candidates = AGENT_MODEL_POOL.filter(m => !triedIds.has(m.id));
         const model = candidates.length
             ? candidates[Math.floor(Math.random() * candidates.length)]
-            : CHUNKING_MODEL_POOL[Math.floor(Math.random() * CHUNKING_MODEL_POOL.length)];
+            : AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
         triedIds.add(model.id);
 
         const promptChars = prompt.length;

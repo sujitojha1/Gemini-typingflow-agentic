@@ -1,4 +1,3 @@
-const GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
 const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
@@ -150,7 +149,7 @@ async function callGemmaAPI(payload) {
     // Fetch up to 5 page images in parallel and attach as inlineData for visual chunk-mapping
     const imageResults = await Promise.allSettled(
         imageItems.slice(0, 5).map(async (img) => {
-            const r = await fetch(img.src);
+            const r = await fetchWithTimeout(img.src, {}, 10000);
             if (!r.ok) throw new Error(`${r.status}`);
             return { mimeType: r.headers.get('content-type') || 'image/jpeg', data: arrayBufferToBase64(await r.arrayBuffer()) };
         })
@@ -208,14 +207,14 @@ async function generateContextualImage({ text, tags }) {
     const prompt = `Create a visually stunning, minimal abstract representation for this learning concept. Context: ${text} Tags: ${(tags || []).join(', ')}`;
 
     try {
-        const response = await fetch(url, {
+        const response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { responseModalities: ["IMAGE", "TEXT"] }
             })
-        });
+        }, 30000);
 
         if (!response.ok) {
             const errBody = await response.json().catch(() => ({}));
@@ -245,7 +244,7 @@ async function fallbackDataUrl(tags) {
     const seed = (tags && tags.length > 0 ? tags[0].replace('#', '') : 'learn') + Math.floor(Math.random() * 999);
     const picsumUrl = `https://picsum.photos/seed/${seed}/800/500`;
     try {
-        const r = await fetch(picsumUrl);
+        const r = await fetchWithTimeout(picsumUrl, {}, 10000);
         if (!r.ok) throw new Error(`picsum ${r.status}`);
         const mimeType = r.headers.get('content-type') || 'image/jpeg';
         return `data:${mimeType};base64,${arrayBufferToBase64(await r.arrayBuffer())}`;
@@ -281,7 +280,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     if (request.action === "proxy_gemini_api") {
-        callGeminiWithModel(request.payload, MODEL_POOL[0].id).then(sendResponse);
+        (async () => {
+            for (const model of MODEL_POOL) {
+                const result = await callGeminiWithModel(request.payload, model.id);
+                if (result.success) { sendResponse(result); return; }
+                console.warn(`[typingflow] proxy_gemini_api: ${model.label} failed:`, result.error);
+            }
+            sendResponse({ error: 'All models failed' });
+        })();
         return true;
     }
     if (request.action === "generate_image_asset") {
