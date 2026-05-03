@@ -7,20 +7,16 @@ const MODEL_POOL = [
     { id: 'gemini-3.1-flash-lite-preview',  label: 'Gemini Flash Lite', vision: false },
     { id: 'gemini-3-flash-preview',          label: 'Gemini 3 Flash',   vision: false },
     { id: 'gemini-2.5-flash-lite',           label: 'Gemini 2.5 Lite',  vision: false },
-    { id: 'gemini-flash-latest',             label: 'Gemini Flash Latest', vision: false },
-    { id: 'gemini-2.0-flash',               label: 'Gemini Flash 2.0',  vision: false },
-    { id: 'gemini-2.5-flash-preview-05-20', label: 'Gemini Flash 2.5',  vision: false },
     { id: 'gemma-4-26b-a4b-it',             label: 'Gemma 4 26B',      vision: true  },
+    { id: 'gemma-4-31b-it',             label: 'Gemma 4 31B',      vision: true  },
 ];
 
 // Agent model pool — randomly rotated per LLM call for agentic tools & ReAct loop
 const AGENT_MODEL_POOL = [
     { id: 'gemini-3.1-flash-lite-preview',  label: 'Flash Lite' },
     { id: 'gemini-3-flash-preview',          label: 'Flash 3' },
-    { id: 'gemini-2.5-flash-lite',           label: 'Flash 2.5 Lite' },
-    { id: 'gemini-flash-latest',             label: 'Flash Latest' },
-    { id: 'gemini-2.0-flash',               label: 'Flash 2.0' },
-    { id: 'gemini-2.5-flash-preview-05-20', label: 'Flash 2.5' },
+    { id: 'gemma-4-26b-a4b-it',             label: 'Gemma 4 26B' },
+    { id: 'gemma-4-31b-it',             label: 'Gemma 4 31B' },
 ];
 
 function pickAgentModel() {
