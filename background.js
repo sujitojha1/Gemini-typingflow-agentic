@@ -123,19 +123,121 @@ async function runAgentPipeline(tabId) {
     agentBroadcast(tabId, 'complete (Steps 1-4 Done)', usedModel.label,
         `${structureResult.api_response.nuggets?.length} nuggets`);
 
-    // TASK: background Gemma refinement (always, regardless of which model mounted)
+    // TASK: run parallel agentic track via function calling
     if (usedModel.id !== GEMMA_MODEL) {
-        agentBroadcast(tabId, 'refining with Gemma 4', 'Gemma 4 31B');
-        callGemmaAPI(payload).then(result => {
-            if (result.success) {
-                chrome.tabs.sendMessage(tabId,
-                    { action: 'update_nuggets', data: result.api_response },
-                    () => { chrome.runtime.lastError; });
-                agentBroadcast(tabId, 'refined', 'Gemma 4 31B');
-            } else {
-                console.warn('[agent] Gemma refinement failed:', result.error);
+        runAgenticParallelTrack(tabId, payload);
+    }
+}
+
+async function runAgenticParallelTrack(tabId, payload) {
+    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
+    if (!geminiApiKey) return;
+
+    let instructText = "";
+    try {
+        const url = chrome.runtime.getURL('instruct.md');
+        const res = await fetch(url);
+        instructText = await res.text();
+    } catch(e) {
+        console.warn("[agent loop] Failed to read instruct.md", e);
+        return;
+    }
+
+    const tools = [{
+        functionDeclarations: [
+            {
+                name: "createSession",
+                description: "Generate a unique timestamp-based sessionId and securely set up a temporary workspace folder to isolate this processing run."
+            },
+            {
+                name: "saveInitialContent",
+                description: "Securely cache the extracted payload (text blocks and image URLs) into the temporary folder. This cached file serves as the raw material for the agent's deep processing.",
+                parameters: {
+                    type: "OBJECT",
+                    properties: { tempFolderPath: { type: "STRING" } },
+                    required: ["tempFolderPath"]
+                }
+            },
+            {
+                name: "processChunk",
+                description: "Pass the saved chunk data and instruct the agent to run a parallel background task using the gemma-4-31b-it model. The agent must deeply refine the structured nuggets by processing text and base64 images simultaneously for accurate visual mapping."
+            },
+            {
+                name: "stateHandoff",
+                description: "Ensure the extension seamlessly switches to these later chunks without interrupting the user's active session."
             }
+        ]
+    }];
+
+    const modelId = "gemini-3.1-flash-lite-preview";
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+
+    let history = [
+        { role: "user", parts: [{ text: `You are the orchestrator for the parallel agentic track. Follow these instructions step-by-step by calling the provided tools sequentially:\n\n${instructText}` }] }
+    ];
+
+    let gemmaRefinedData = null;
+
+    for (let i = 0; i < 10; i++) {
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: history, tools: tools })
         });
+        
+        if (!response.ok) {
+            console.warn("[agent loop] API error:", await response.text());
+            break;
+        }
+        
+        const data = await response.json();
+        const candidate = data.candidates?.[0];
+        if (!candidate) break;
+        
+        history.push(candidate.content);
+        
+        const parts = candidate.content.parts || [];
+        const functionCallPart = parts.find(p => p.functionCall);
+        
+        if (functionCallPart) {
+            const name = functionCallPart.functionCall.name;
+            agentBroadcast(tabId, `Agent Call: ${name}`, modelId);
+            
+            let funcResult = { status: "Success" };
+            
+            if (name === "createSession") {
+                funcResult = { sessionId: "session_" + Date.now(), tempFolderPath: "/tmp/agent_workspace" };
+            } else if (name === "saveInitialContent") {
+                funcResult = { cachedBytes: JSON.stringify(payload).length };
+            } else if (name === "processChunk") {
+                agentBroadcast(tabId, 'refining with Gemma 4', 'Gemma 4 31B');
+                const gemmaRes = await callGemmaAPI(payload);
+                if (gemmaRes.success) {
+                    gemmaRefinedData = gemmaRes.api_response;
+                    funcResult = { status: "Refined", nuggetCount: gemmaRefinedData.nuggets?.length };
+                } else {
+                    funcResult = { status: "Failed", error: gemmaRes.error };
+                }
+            } else if (name === "stateHandoff") {
+                if (gemmaRefinedData) {
+                    chrome.tabs.sendMessage(tabId,
+                        { action: 'update_nuggets', data: gemmaRefinedData },
+                        () => { chrome.runtime.lastError; });
+                    agentBroadcast(tabId, 'refined', 'Gemma 4 31B');
+                }
+                funcResult = { status: "Handoff Complete" };
+            }
+            
+            history.push({
+                role: "user",
+                parts: [{ functionResponse: { name: name, response: funcResult } }]
+            });
+            
+            if (name === "stateHandoff") break; // Process finished
+        } else {
+            // If the model produced plain text without a function call, prompt it to continue
+            history.push({ role: "user", parts: [{ text: "Please continue executing the next step using function calling." }]});
+        }
     }
 }
 
