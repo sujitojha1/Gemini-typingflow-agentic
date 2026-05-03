@@ -104,6 +104,7 @@ DOM extracted (text blocks + image URLs)
 │ Fast text-only structuring      │   │ 1. Session & Content Indexing                │
 │ ~2s                             │   │ 2. Semantic Chunk Identification             │
 │                                 │   │ 3. Parallel Agent Loops (per chunk)          │
+│                                 │   │    • checkRelevance (ad filter)              │
 │                                 │   │    • Image matching / generation             │
 │                                 │   │    • getChunkStats, extractSubject           │
 │                                 │   │    • evaluateChunk, refineChunk              │
@@ -123,7 +124,7 @@ DOM extracted (text blocks + image URLs)
 ```
 
 **Why an Agentic Loop for re-chunking:**
-The agent runs an independent async loop per chunk. It extracts subjects, evaluates chunk quality, optionally refines the text if the clarity score is low, and dynamically matches or generates images contextually. This ensures the nuggets are deeply synthesized rather than just structured.
+The agent runs an independent async loop per chunk. It checks relevance to filter ads and boilerplate, extracts subjects, evaluates chunk quality, optionally refines the text if the clarity score is low, and dynamically matches or generates images contextually. This ensures the nuggets are deeply synthesized rather than just structured.
 
 **Session state preservation:**
 Both versions are kept in memory — `sessionData.geminiNuggets` (original) and `sessionData.nuggets` (Agent refined, live after update). The gallery subtitle appends `· ✦ refined by Agent` when the update arrives.
