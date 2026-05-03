@@ -39,6 +39,14 @@ function callModelForStructuring(payload, model) {
     return model.vision ? callGemmaAPI(payload) : callGeminiWithModel(payload, model.id);
 }
 
+// Returns first N words of str with trailing ellipsis if truncated
+function preview(str, words = 8) {
+    if (str == null) return '';
+    const s = String(str).trim().replace(/\s+/g, ' ');
+    const ws = s.split(' ');
+    return ws.length <= words ? s : ws.slice(0, words).join(' ') + ' ...';
+}
+
 // ── LLM Response Parser ──────────────────────────────────────────────────────
 
 function parseLLMResponse(text) {
@@ -65,11 +73,11 @@ async function runAgentPipeline(tabId) {
         return;
     }
 
-    agentBroadcast(tabId, 'Step 1: Create an agent session', '—');
+    agentBroadcast(tabId, '[1/4] Session init', '—');
     const sessionId = 'session_' + Date.now();
     await new Promise(r => setTimeout(r, 600));
 
-    agentBroadcast(tabId, 'Step 2: Initial Content Storage', '—');
+    agentBroadcast(tabId, '[2/4] Extracting content', '—', `in: tab ${tabId}`);
     let payload;
     try {
         payload = await extractFromTab(tabId);
@@ -82,18 +90,23 @@ async function runAgentPipeline(tabId) {
         return;
     }
 
+    agentBroadcast(tabId, '[2/4] Content extracted', '—',
+        `out: ${payload.length} blocks | "${preview(payload.find(p => p.type === 'text')?.content)}"`);
+
     await chrome.storage.local.set({ [`tf_agent_payload_${sessionId}`]: payload, tf_agent_tab: tabId });
     await new Promise(r => setTimeout(r, 600));
 
     let structureResult = null;
     let usedModel = null;
     for (const model of MODEL_POOL) {
-        agentBroadcast(tabId, 'Step 3: Structuring nuggets', model.label);
+        agentBroadcast(tabId, `[3/4] Structuring`, model.label, `in: ${payload.length} blocks`);
         try {
             const result = await callModelForStructuring(payload, model);
             if (result.success) { structureResult = result; usedModel = model; break; }
+            agentBroadcast(tabId, `[3/4] ${model.label} failed`, model.label, preview(result.error));
             console.warn(`[agent] ${model.label} failed:`, result.error);
         } catch (e) {
+            agentBroadcast(tabId, `[3/4] ${model.label} threw`, model.label, preview(e.message));
             console.warn(`[agent] ${model.label} threw:`, e.message);
         }
     }
@@ -102,7 +115,11 @@ async function runAgentPipeline(tabId) {
         return;
     }
 
-    agentBroadcast(tabId, 'Step 4: Mounting gallery', usedModel.label);
+    const nuggets = structureResult.api_response.nuggets || [];
+    agentBroadcast(tabId, '[3/4] Structured', usedModel.label,
+        `out: ${nuggets.length} nuggets | "${preview(structureResult.api_response.tldr)}"`);
+
+    agentBroadcast(tabId, '[4/4] Mounting gallery', usedModel.label, `${nuggets.length} nuggets`);
     await tabMessage(tabId, { action: 'mount_ui', data: structureResult.api_response })
         .catch(() => {});
     chrome.tabs.sendMessage(tabId, { action: 'open_overlay' }, () => { chrome.runtime.lastError; });
@@ -110,19 +127,19 @@ async function runAgentPipeline(tabId) {
     chrome.runtime.sendMessage({ action: 'agent_close_popup' }, () => { chrome.runtime.lastError; });
 
     await chrome.storage.local.set({
-        tf_agent_nuggets: structureResult.api_response.nuggets || [],
+        tf_agent_nuggets: nuggets,
         tf_agent_session: {
             timestamp: Date.now(),
             model: usedModel.label,
-            nuggetCount: structureResult.api_response.nuggets?.length,
+            nuggetCount: nuggets.length,
             tldr: structureResult.api_response.tldr,
             tags: structureResult.api_response.tags,
             star_rating: structureResult.api_response.star_rating,
         }
     });
 
-    agentBroadcast(tabId, 'complete (Steps 1-4 Done)', usedModel.label,
-        `${structureResult.api_response.nuggets?.length} nuggets`);
+    agentBroadcast(tabId, 'Done [1-4]', usedModel.label,
+        `${nuggets.length} nuggets | "${preview(structureResult.api_response.tldr)}"`);
 
     if (usedModel.id !== GEMMA_MODEL) {
         runAgenticParallelTrack(tabId, payload);
@@ -189,17 +206,17 @@ Rules: group related consecutive blocks; generate as many chunks as needed, but 
 // Called in parallel across all chunks via Promise.all.
 async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex) {
     const history = [];
+    const C = `[C${chunkIdx + 1}/${totalChunks}]`;
 
     // Step 0: Check relevance
+    agentBroadcast(tabId, `${C} checkRelevance`, 'Flash Lite', `in: "${preview(chunk.text)}"`);
     const relevance = await toolCheckRelevance({ text: chunk.text });
     history.push({ tool: 'checkRelevance', input: { chunkIdx }, result: relevance });
+    agentBroadcast(tabId, `${C} checkRelevance`, 'Flash Lite',
+        `out: isAd=${relevance.isAd}${relevance.reason ? ' | "' + preview(relevance.reason) + '"' : ''}`);
+
     if (relevance.isAd) {
-        agentBroadcast(
-            tabId,
-            `Chunk ${chunkIdx + 1}/${totalChunks}: dropped (Ad/Irrelevant)`,
-            'Gemini Flash Lite',
-            relevance.reason
-        );
+        agentBroadcast(tabId, `${C} dropped (Ad/Irrelevant)`, 'Flash Lite', `"${preview(relevance.reason)}"`);
         const coverage = await toolUpdateCoverage({ chunkIdx, totalChunks });
         history.push({ tool: 'updateCoverage', input: { chunkIdx, totalChunks }, result: coverage });
         return { chunkIdx, isAd: true, history };
@@ -215,58 +232,72 @@ async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex
             input: { chunkIdx, nearbyImageIdx: chunk.nearbyImageIdx },
             result: { matched: true, src: imgSrc },
         });
+        agentBroadcast(tabId, `${C} findMatchingImage`, 'index',
+            `out: idx=${chunk.nearbyImageIdx} | "${preview(imgSrc)}"`);
     } else {
         const imagePrompt = chunk.text.slice(0, 300) + (chunk.tags?.length ? ' | ' + chunk.tags.join(', ') : '');
         history.push({
             tool: 'generateChunkImage',
             input: { chunkIdx, prompt: imagePrompt },
         });
+        agentBroadcast(tabId, `${C} generateChunkImage`, 'Imagen', `in: "${preview(imagePrompt)}"`);
         const generated = await generateContextualImage({ text: chunk.text, tags: chunk.tags || [] });
         imgSrc = generated.img_src;
         history[history.length - 1].result = { img_src: imgSrc };
+        agentBroadcast(tabId, `${C} generateChunkImage`, 'Imagen', `out: "${preview(imgSrc)}"`);
     }
 
-    // Step 2: Stats
+    // Step 2: Stats (sync)
     const stats = toolGetChunkStats({ text: chunk.text });
     history.push({ tool: 'getChunkStats', input: { chunkIdx }, result: stats });
+    agentBroadcast(tabId, `${C} getChunkStats`, '—', `out: ${stats.wordCount ?? '?'} words`);
 
     // Step 3: Subject
+    agentBroadcast(tabId, `${C} extractSubject`, 'Flash Lite', `in: "${preview(chunk.text)}"`);
     const subjectResult = await toolExtractSubject({ text: chunk.text });
     const subject = subjectResult.subject || 'Untitled';
     history.push({ tool: 'extractSubject', input: { chunkIdx }, result: subjectResult });
+    agentBroadcast(tabId, `${C} extractSubject`, 'Flash Lite', `out: "${subject}"`);
 
     // Step 4: Evaluate
+    agentBroadcast(tabId, `${C} evaluateChunk`, 'Flash Lite', `in: "${preview(chunk.text)}"`);
     const evaluation = await toolEvaluateChunk({ text: chunk.text });
     history.push({ tool: 'evaluateChunk', input: { chunkIdx }, result: evaluation });
+    agentBroadcast(tabId, `${C} evaluateChunk`, 'Flash Lite', `out: score=${evaluation.score ?? '?'}`);
 
     // Step 5: Check Grammar
+    agentBroadcast(tabId, `${C} checkGrammar`, 'Flash Lite', `in: "${preview(chunk.text)}"`);
     const grammar = await toolCheckGrammar({ text: chunk.text });
     history.push({ tool: 'checkGrammar', input: { chunkIdx }, result: grammar });
+    agentBroadcast(tabId, `${C} checkGrammar`, 'Flash Lite',
+        `out: proper=${grammar.isProper}${grammar.issues?.length ? ' | ' + grammar.issues.length + ' issues' : ''}`);
 
     // Step 6: Refine — only if grammar is NOT proper; skip if grammar is proper or errored
     let refinedText = chunk.text;
     if (!grammar.error && !grammar.isProper) {
+        agentBroadcast(tabId, `${C} refineChunk`, 'Flash Lite', `in: "${preview(chunk.text)}"`);
         const refined = await toolRefineChunk({ text: chunk.text, grammar, evaluation });
         refinedText = refined.refinedText || chunk.text;
         history.push({ tool: 'refineChunk', input: { chunkIdx, issues: grammar.issues }, result: { refinedText } });
+        agentBroadcast(tabId, `${C} refineChunk`, 'Flash Lite', `out: "${preview(refinedText)}"`);
     } else {
+        const skipReason = grammar.error ? 'grammar error' : 'already proper';
         history.push({
             tool: 'refineChunk',
             input: { chunkIdx },
-            result: { refinedText, skipped: true, reason: grammar.error ? 'grammar error' : 'grammar proper' },
+            result: { refinedText, skipped: true, reason: skipReason },
         });
+        agentBroadcast(tabId, `${C} refineChunk`, '—', `skipped: ${skipReason}`);
     }
 
     // Step 7: Coverage
     const coverage = await toolUpdateCoverage({ chunkIdx, totalChunks });
     history.push({ tool: 'updateCoverage', input: { chunkIdx, totalChunks }, result: coverage });
+    agentBroadcast(tabId, `${C} updateCoverage`, '—',
+        `out: ${coverage.coverage}% | score=${evaluation.score ?? '?'}`);
 
-    agentBroadcast(
-        tabId,
-        `Chunk ${chunkIdx + 1}/${totalChunks}: done`,
-        'Gemini Flash Lite',
-        `score:${evaluation.score ?? '?'} cov:${coverage.coverage}%`
-    );
+    agentBroadcast(tabId, `${C} done`, 'Flash Lite',
+        `score=${evaluation.score ?? '?'} | cov=${coverage.coverage}%`);
 
     return { chunkIdx, text: chunk.text, refinedText, imgSrc, tags: chunk.tags, subject, stats, evaluation, coverage: coverage.coverage, history };
 }
@@ -279,7 +310,7 @@ async function runAgenticParallelTrack(tabId, payload) {
 
     // Phase 1: Session + index
     const sessionId = 'session_' + Date.now();
-    agentBroadcast(tabId, 'Parallel Track: session created', modelId, sessionId);
+    agentBroadcast(tabId, '[Phase 1] Session created', modelId, `id: ${sessionId}`);
 
     const imageIndex = payload
         .filter(p => p.type === 'image' && isValidHttpUrl(p.src))
@@ -295,19 +326,24 @@ async function runAgenticParallelTrack(tabId, payload) {
         tf_pt_coverage: [],
     });
 
-    agentBroadcast(tabId, 'Parallel Track: content indexed', modelId,
-        `${textBlocks.length} text blocks · ${imageIndex.length} images`);
+    agentBroadcast(tabId, '[Phase 1] Content indexed', modelId,
+        `${textBlocks.length} text blocks | ${imageIndex.length} images | "${preview(textBlocks[0]?.text)}"`);
 
     // Phase 2: LLM identifies semantic chunks
-    agentBroadcast(tabId, 'Parallel Track: identifying semantic chunks', modelId);
+    agentBroadcast(tabId, '[Phase 2] Identifying semantic chunks', modelId,
+        `in: ${textBlocks.length} blocks`);
     let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey);
 
     if (!chunks?.length) {
         // Fallback: one chunk per text block
         chunks = textBlocks.map(b => ({ text: b.text, tags: [], blockIndices: [b.idx], nearbyImageIdx: null }));
+        agentBroadcast(tabId, '[Phase 2] Fallback: 1 chunk per block', modelId, `${chunks.length} chunks`);
+    } else {
+        agentBroadcast(tabId, '[Phase 2] Chunks identified', modelId,
+            `out: ${chunks.length} chunks | "${preview(chunks[0]?.text)}"`);
     }
 
-    agentBroadcast(tabId, `Parallel Track: ${chunks.length} chunks — starting async loops`, modelId);
+    agentBroadcast(tabId, `[Phase 3] Starting ${chunks.length} parallel loops`, modelId);
 
     // Phase 3: All chunk agent loops run in parallel
     const chunkResults = await Promise.all(
@@ -340,7 +376,6 @@ async function runAgenticParallelTrack(tabId, payload) {
         () => { chrome.runtime.lastError; }
     );
 
-    agentBroadcast(tabId, 'Parallel Track: complete', modelId,
-        `${chunkResults.length} chunks refined & handed off`);
+    agentBroadcast(tabId, '[Phase 4] Handoff complete', modelId,
+        `${validResults.length}/${chunkResults.length} valid chunks refined`);
 }
-

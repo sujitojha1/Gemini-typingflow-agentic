@@ -267,14 +267,58 @@ const INJECT_CSS = `
   .tf-coverage-bar { display: inline-block; width: 80px; height: 4px; background: #222; border-radius: 2px; vertical-align: middle; margin: 0 6px; position: relative; overflow: hidden; }
   .tf-coverage-fill { position: absolute; left: 0; top: 0; height: 100%; background: #27c93f; border-radius: 2px; }
 
-  .tf-log-btn { background: rgba(74, 140, 212, 0.1); border: 1px solid rgba(74, 140, 212, 0.4); color: #4a8cd4; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-family: 'Menlo', monospace; margin-left: 15px; }
-  .tf-log-btn:hover { background: rgba(74, 140, 212, 0.2); }
-  .tf-log-modal { position: absolute; inset: 60px 40px; background: #111; border: 1px solid #333; z-index: 100; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.8); animation: fade-in 0.2s; }
-  .tf-log-modal-hdr { padding: 15px 20px; background: #1a1a1a; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
-  .tf-log-title { color: #ECEBDE; font-size: 13px; font-weight: bold; }
-  .tf-log-close { cursor: pointer; color: #888; font-size: 18px; line-height: 1; }
-  .tf-log-close:hover { color: #fff; }
-  .tf-log-body { padding: 20px; overflow-y: auto; flex: 1; color: #aaa; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; font-family: 'Menlo', monospace; }
+  .tf-log-btn { background: rgba(74, 140, 212, 0.1); border: 1px solid rgba(74, 140, 212, 0.4); color: #4a8cd4; font-size: 11px; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-family: 'Menlo', monospace; margin-left: 15px; transition: all 0.15s; }
+  .tf-log-btn:hover { background: rgba(74, 140, 212, 0.25); border-color: #4a8cd4; }
+  .tf-log-modal { position: absolute; inset: 40px 30px; background: #0d0d12; border: 1px solid rgba(255,255,255,0.08); z-index: 100; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.9); animation: fade-in 0.25s; }
+  .tf-log-modal-hdr { padding: 14px 22px; background: rgba(20,20,28,0.95); border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  .tf-log-title { color: #ECEBDE; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .tf-log-title-pip { width: 6px; height: 6px; border-radius: 50%; background: #27c93f; }
+  .tf-log-stats { color: #555; font-size: 11px; font-family: 'Menlo', monospace; }
+  .tf-log-close { cursor: pointer; color: #555; font-size: 20px; line-height: 1; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.15s; }
+  .tf-log-close:hover { color: #fff; background: rgba(255,255,255,0.08); }
+  .tf-log-body { padding: 16px 22px; overflow-y: auto; flex: 1; }
+
+  .tf-log-chunk { margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.01); }
+  .tf-log-chunk-hdr { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; cursor: pointer; user-select: none; transition: background 0.15s; }
+  .tf-log-chunk-hdr:hover { background: rgba(255,255,255,0.03); }
+  .tf-log-chunk-title { display: flex; align-items: center; gap: 10px; }
+  .tf-log-chunk-arrow { color: #444; font-size: 10px; transition: transform 0.2s; }
+  .tf-log-chunk.open .tf-log-chunk-arrow { transform: rotate(90deg); }
+  .tf-log-chunk-idx { color: #E1C04C; font-size: 12px; font-weight: 600; font-family: 'Menlo', monospace; }
+  .tf-log-chunk-label { color: #888; font-size: 11px; font-family: 'Menlo', monospace; }
+  .tf-log-chunk-badges { display: flex; gap: 8px; align-items: center; }
+  .tf-log-badge { font-size: 10px; padding: 2px 7px; border-radius: 3px; font-family: 'Menlo', monospace; }
+  .tf-log-badge-score { background: rgba(225,192,76,0.12); color: #E1C04C; }
+  .tf-log-badge-cov { background: rgba(39,201,63,0.1); color: #27c93f; }
+  .tf-log-badge-skip { background: rgba(255,85,85,0.1); color: #ff5555; }
+  .tf-log-badge-ok { background: rgba(74,140,212,0.1); color: #4a8cd4; }
+  .tf-log-chunk-steps { display: none; padding: 0 16px 12px; }
+  .tf-log-chunk.open .tf-log-chunk-steps { display: block; }
+
+  .tf-log-step { display: flex; gap: 0; margin-bottom: 2px; position: relative; }
+  .tf-log-step-line { position: absolute; left: 14px; top: 24px; bottom: -2px; width: 1px; background: rgba(255,255,255,0.04); }
+  .tf-log-step:last-child .tf-log-step-line { display: none; }
+  .tf-log-step-dot { flex-shrink: 0; width: 28px; display: flex; justify-content: center; padding-top: 7px; }
+  .tf-log-step-dot-inner { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid #333; background: #0d0d12; z-index: 1; }
+  .tf-log-step.done .tf-log-step-dot-inner { background: #27c93f; border-color: #27c93f; }
+  .tf-log-step.skipped .tf-log-step-dot-inner { background: #555; border-color: #555; }
+  .tf-log-step-content { flex: 1; padding: 4px 0 10px; min-width: 0; }
+  .tf-log-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .tf-log-tool-name { font-size: 12px; font-weight: 600; color: #ECEBDE; font-family: 'Menlo', monospace; }
+  .tf-log-tool-tag { font-size: 9px; padding: 1px 6px; border-radius: 3px; font-family: 'Menlo', monospace; letter-spacing: 0.3px; }
+  .tf-log-tool-tag.relevance { background: rgba(255,189,46,0.12); color: #ffbd2e; }
+  .tf-log-tool-tag.image { background: rgba(155,89,182,0.15); color: #bb86fc; }
+  .tf-log-tool-tag.stats { background: rgba(74,140,212,0.12); color: #4a8cd4; }
+  .tf-log-tool-tag.eval { background: rgba(225,192,76,0.12); color: #E1C04C; }
+  .tf-log-tool-tag.grammar { background: rgba(39,201,63,0.1); color: #27c93f; }
+  .tf-log-tool-tag.refine { background: rgba(255,85,85,0.1); color: #ff5555; }
+  .tf-log-tool-tag.coverage { background: rgba(74,140,212,0.1); color: #6cb4ee; }
+  .tf-log-sub { font-size: 11px; color: #555; font-family: 'Menlo', monospace; line-height: 1.6; padding-left: 2px; }
+  .tf-log-sub-label { color: #444; margin-right: 4px; }
+  .tf-log-sub-val { color: #777; word-break: break-all; }
+  .tf-log-sub-val.highlight { color: #E1C04C; }
+  .tf-log-sub-val.ok { color: #27c93f; }
+  .tf-log-sub-val.warn { color: #ff5555; }
 `;
 
 function agentBarHTML() {
@@ -443,39 +487,146 @@ function renderNuggetGallery() {
     });
 }
 
+function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function _toolTag(name) {
+    const map = {
+        checkRelevance: 'relevance', findMatchingImage: 'image', generateChunkImage: 'image',
+        getChunkStats: 'stats', extractSubject: 'stats', evaluateChunk: 'eval',
+        checkGrammar: 'grammar', refineChunk: 'refine', updateCoverage: 'coverage',
+    };
+    return map[name] || 'stats';
+}
+
+function _toolLabel(name) {
+    const map = {
+        checkRelevance: 'FILTER', findMatchingImage: 'IMAGE', generateChunkImage: 'IMAGE',
+        getChunkStats: 'STATS', extractSubject: 'EXTRACT', evaluateChunk: 'EVAL',
+        checkGrammar: 'GRAMMAR', refineChunk: 'REFINE', updateCoverage: 'COV',
+    };
+    return map[name] || 'TOOL';
+}
+
+function _formatVal(obj) {
+    if (obj == null) return '<span class="tf-log-sub-val">—</span>';
+    if (typeof obj === 'string') return `<span class="tf-log-sub-val">${_esc(obj)}</span>`;
+    if (typeof obj === 'boolean') return `<span class="tf-log-sub-val ${obj ? 'ok' : 'warn'}">${obj}</span>`;
+    if (typeof obj === 'number') return `<span class="tf-log-sub-val highlight">${obj}</span>`;
+    const s = JSON.stringify(obj, null, 2);
+    if (s.length < 120) return `<span class="tf-log-sub-val">${_esc(s)}</span>`;
+    return `<span class="tf-log-sub-val">${_esc(s.slice(0, 200))}…</span>`;
+}
+
+function _buildStepHTML(step, idx) {
+    const isDone = !step.result?.skipped;
+    const isSkipped = !!step.result?.skipped;
+    const cls = isSkipped ? 'skipped' : 'done';
+
+    // Build sub-rows for each key in input and result
+    let subsHTML = '';
+    if (step.input && Object.keys(step.input).length) {
+        for (const [k, v] of Object.entries(step.input)) {
+            subsHTML += `<div class="tf-log-sub"><span class="tf-log-sub-label">in.${_esc(k)}:</span> ${_formatVal(v)}</div>`;
+        }
+    }
+    if (step.result && typeof step.result === 'object') {
+        for (const [k, v] of Object.entries(step.result)) {
+            if (k === 'refinedText' && typeof v === 'string' && v.length > 100) {
+                subsHTML += `<div class="tf-log-sub"><span class="tf-log-sub-label">out.${_esc(k)}:</span> <span class="tf-log-sub-val">${_esc(v.slice(0, 120))}…</span></div>`;
+            } else {
+                const valClass = k === 'skipped' ? (v ? 'warn' : 'ok') : (k === 'score' ? 'highlight' : '');
+                subsHTML += `<div class="tf-log-sub"><span class="tf-log-sub-label">out.${_esc(k)}:</span> ${valClass ? `<span class="tf-log-sub-val ${valClass}">${_esc(JSON.stringify(v))}</span>` : _formatVal(v)}</div>`;
+            }
+        }
+    }
+
+    return `<div class="tf-log-step ${cls}">
+        <div class="tf-log-step-dot"><div class="tf-log-step-dot-inner"></div></div>
+        <div class="tf-log-step-line"></div>
+        <div class="tf-log-step-content">
+            <div class="tf-log-step-head">
+                <span class="tf-log-tool-name">${_esc(step.tool)}</span>
+                <span class="tf-log-tool-tag ${_toolTag(step.tool)}">${_toolLabel(step.tool)}</span>
+                ${isSkipped ? '<span class="tf-log-badge tf-log-badge-skip">skipped</span>' : ''}
+            </div>
+            ${subsHTML}
+        </div>
+    </div>`;
+}
+
 function showLogModal() {
     let modal = document.getElementById('tf-log-modal');
-    if (modal) { modal.remove(); return; } // toggle off
-    
+    if (modal) { modal.remove(); return; }
+
     modal = document.createElement('div');
     modal.id = 'tf-log-modal';
     modal.className = 'tf-log-modal';
-    
-    let logText = 'Agentic Process History:\\n========================\\n\\n';
-    if (!sessionData.processHistory) {
-        logText += 'No logs available.';
+
+    const history = sessionData.processHistory || [];
+    const totalChunks = history.length;
+    const totalSteps = history.reduce((s, c) => s + (c.steps?.length || 0), 0);
+
+    let chunksHTML = '';
+    if (!history.length) {
+        chunksHTML = '<div style="color:#555; padding: 40px; text-align:center; font-size: 12px;">No agent logs available yet. Process a page first.</div>';
     } else {
-        sessionData.processHistory.forEach(chunk => {
-            logText += `[ Chunk ${chunk.chunkIdx + 1} ]\\n`;
-            chunk.steps.forEach(step => {
-                logText += `  > Tool: ${step.tool}\\n`;
-                logText += `    Input:  ${JSON.stringify(step.input)}\\n`;
-                logText += `    Result: ${JSON.stringify(step.result)}\\n`;
-            });
-            logText += '\\n';
+        history.forEach((chunk, ci) => {
+            const steps = chunk.steps || [];
+            const evalStep = steps.find(s => s.tool === 'evaluateChunk');
+            const covStep = steps.find(s => s.tool === 'updateCoverage');
+            const gramStep = steps.find(s => s.tool === 'checkGrammar');
+            const score = evalStep?.result?.score;
+            const cov = covStep?.result?.coverage;
+            const isDropped = steps.some(s => s.tool === 'checkRelevance' && s.result?.isAd);
+
+            let badgesHTML = '';
+            if (isDropped) badgesHTML += '<span class="tf-log-badge tf-log-badge-skip">dropped</span>';
+            if (score != null) badgesHTML += `<span class="tf-log-badge tf-log-badge-score">score ${score}/5</span>`;
+            if (cov != null) badgesHTML += `<span class="tf-log-badge tf-log-badge-cov">${cov}%</span>`;
+            if (gramStep?.result?.isProper === true) badgesHTML += '<span class="tf-log-badge tf-log-badge-ok">grammar ✓</span>';
+            if (gramStep?.result?.isProper === false) badgesHTML += '<span class="tf-log-badge tf-log-badge-skip">grammar ✗</span>';
+
+            let stepsHTML = '';
+            steps.forEach((step, si) => { stepsHTML += _buildStepHTML(step, si); });
+
+            chunksHTML += `<div class="tf-log-chunk" data-ci="${ci}">
+                <div class="tf-log-chunk-hdr">
+                    <div class="tf-log-chunk-title">
+                        <span class="tf-log-chunk-arrow">▶</span>
+                        <span class="tf-log-chunk-idx">Chunk ${chunk.chunkIdx + 1}</span>
+                        <span class="tf-log-chunk-label">${steps.length} steps</span>
+                    </div>
+                    <div class="tf-log-chunk-badges">${badgesHTML}</div>
+                </div>
+                <div class="tf-log-chunk-steps">${stepsHTML}</div>
+            </div>`;
         });
     }
 
     modal.innerHTML = `
         <div class="tf-log-modal-hdr">
-            <div class="tf-log-title">Agent Tool Logs</div>
-            <div class="tf-log-close" id="tf-log-close">&times;</div>
+            <div class="tf-log-title"><div class="tf-log-title-pip"></div>Agent Process Logs</div>
+            <div style="display:flex; align-items:center; gap:16px;">
+                <span class="tf-log-stats">${totalChunks} chunks · ${totalSteps} tool calls</span>
+                <div class="tf-log-close" id="tf-log-close">&times;</div>
+            </div>
         </div>
-        <div class="tf-log-body">${logText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+        <div class="tf-log-body">${chunksHTML}</div>
     `;
-    
+
     overlayWrapper.appendChild(modal);
     document.getElementById('tf-log-close').addEventListener('click', () => modal.remove());
+
+    // Accordion toggle
+    modal.querySelectorAll('.tf-log-chunk-hdr').forEach(hdr => {
+        hdr.addEventListener('click', () => {
+            hdr.parentElement.classList.toggle('open');
+        });
+    });
+
+    // Auto-open first chunk
+    const first = modal.querySelector('.tf-log-chunk');
+    if (first) first.classList.add('open');
 }
 
 function openOverlay() {
