@@ -1,36 +1,31 @@
 {
   "manifest_version": 3,
   "name": "Gemini TypingFlow Context Engine",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Transforms web articles into active recall typing sessions mapped with Hybrid Contextual Visuals using Gemini Flash Lite 3.1 Preview.",
-  "icons": {
-    "16": "icon.png",
-    "48": "icon.png",
-    "128": "icon.png"
-  },
   "permissions": [
     "activeTab",
     "scripting",
     "storage"
   ],
-  "background": {
-    "service_worker": "background.js"
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
+  "icons": {
+    "16": "images/icon16.png",
+    "32": "images/icon32.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
   },
   "action": {
+    "default_title": "Gemini Study Buddy",
     "default_popup": "popup.html",
-    "default_icon": "icon.png"
-  },
-  "options_ui": {
-    "page": "options.html",
-    "open_in_tab": true
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"]
+    "default_icon": {
+      "16": "images/icon16.png",
+      "32": "images/icon32.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
     }
-  ],
-  "host_permissions": [
-    "https://generativelanguage.googleapis.com/*"
-  ]
+  }
 }
