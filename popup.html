@@ -63,42 +63,43 @@
     .loader-pulse { animation: pulse 2s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.4; } }
 
-    .topbar {
-        display: flex; justify-content: flex-end; margin-bottom: 4px;
-    }
-    .btn-settings-icon {
-        background: none; border: 1px solid rgba(255,255,255,0.08); color: #4b5563;
-        width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+    .page-meta {
         display: flex; align-items: center; justify-content: center;
-        transition: color 0.2s, border-color 0.2s, background 0.2s;
-        font-size: 15px; padding: 0;
-    }
-    .btn-settings-icon:hover { color: #9ca3af; border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); }
-
-    .page-stats {
-        display: flex; justify-content: center; gap: 10px; margin-bottom: 16px;
-        min-height: 22px;
+        gap: 8px; margin-bottom: 20px;
     }
     .page-stat-chip {
-        font-size: 11px; font-family: 'Inter', monospace; color: #4b5563;
-        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 6px; padding: 3px 9px; letter-spacing: 0.2px;
+        font-size: 11px; color: #6b7280;
+        background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 6px; padding: 4px 10px; letter-spacing: 0.2px;
     }
-    .page-stat-chip span { color: #9ca3af; font-weight: 600; }
+    .page-stat-chip span { color: #e5e7eb; font-weight: 600; }
+    .meta-divider { color: #1f2937; font-size: 16px; user-select: none; }
+    .icon-btn {
+        background: none; border: 1px solid rgba(255,255,255,0.08); color: #4b5563;
+        width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: color 0.2s, border-color 0.2s, background 0.2s;
+        font-size: 14px; padding: 0; flex-shrink: 0;
+    }
+    .icon-btn:hover { color: #9ca3af; border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .icon-btn.spinning { animation: spin 0.6s linear; }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <button id="btn-settings" class="btn-settings-icon" title="Settings">⚙</button>
-  </div>
-
   <div class="header">
     <div class="header-icon">✦</div>
     <h1>Gemini TypingFlow - Agentic</h1>
     <p>AI-Powered Active Recall</p>
   </div>
-  
-  <div id="page-stats" class="page-stats"></div>
+
+  <div class="page-meta">
+    <div class="page-stat-chip" id="stat-words"><span>—</span> words</div>
+    <div class="page-stat-chip" id="stat-images"><span>—</span> images</div>
+    <div class="meta-divider">|</div>
+    <button id="btn-refresh" class="icon-btn" title="Refresh page">↻</button>
+    <button id="btn-settings" class="icon-btn" title="Settings">⚙</button>
+  </div>
 
   <button id="btn-extract" class="btn btn-primary">Process Page Intelligence</button>
   <button id="btn-type" class="btn" disabled>Launch Typing Session</button>

@@ -3,9 +3,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnType = document.getElementById('btn-type');
     const loader = document.getElementById('loader');
     const btnSettings = document.getElementById('btn-settings');
+    const btnRefresh = document.getElementById('btn-refresh');
+    const statWords = document.getElementById('stat-words');
+    const statImages = document.getElementById('stat-images');
 
-    btnSettings.addEventListener('click', () => {
-        chrome.runtime.openOptionsPage();
+    btnSettings.addEventListener('click', () => chrome.runtime.openOptionsPage());
+
+    btnRefresh.addEventListener('click', () => {
+        btnRefresh.classList.add('spinning');
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (!tabs || tabs.length === 0) return;
+            chrome.tabs.reload(tabs[0].id, {}, () => {
+                setTimeout(() => btnRefresh.classList.remove('spinning'), 600);
+            });
+        });
     });
 
     function updateLoader(msg) {
@@ -15,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function hideLoader() { loader.style.display = 'none'; }
 
-    // Agentic Tweak 1: Instant page intelligence scan on popup open
+    // On popup open: scan page stats + check existing session in one query
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs || tabs.length === 0) return;
         const tabId = tabs[0].id;
@@ -26,26 +37,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 const root = document.querySelector('article, main, [role="main"]') || document.body;
                 const textEls = Array.from(root.querySelectorAll('p, h1, h2, h3, li, blockquote'))
                     .filter(el => !el.closest('nav, header, footer, aside, [role="navigation"]'));
-                const text = textEls.map(el => el.innerText.trim()).join(' ');
-                const charCount = text.replace(/\s/g, '').length;
-                const wordCount = text.split(/\s+/).filter(Boolean).length;
+                const wordCount = textEls.map(el => el.innerText.trim()).join(' ')
+                    .split(/\s+/).filter(Boolean).length;
                 const imageCount = Array.from(root.querySelectorAll('img'))
                     .filter(img => (img.naturalWidth || img.width) > 100 && !img.src.startsWith('data:')).length;
-                return { charCount, wordCount, imageCount };
+                return { wordCount, imageCount };
             }
         }, (results) => {
             if (chrome.runtime.lastError || !results || !results[0]) return;
-            const { charCount, wordCount, imageCount } = results[0].result;
-            const statsEl = document.getElementById('page-stats');
+            const { wordCount, imageCount } = results[0].result;
             const fmt = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
-            statsEl.innerHTML = `
-                <div class="page-stat-chip"><span>${fmt(charCount)}</span> chars</div>
-                <div class="page-stat-chip"><span>${fmt(wordCount)}</span> words</div>
-                <div class="page-stat-chip"><span>${imageCount}</span> images</div>
-            `;
+            statWords.innerHTML = `<span>${fmt(wordCount)}</span> words`;
+            statImages.innerHTML = `<span>${imageCount}</span> images`;
         });
 
-        // Init Logic: Check if a session already exists on this tab
         chrome.tabs.sendMessage(tabId, { action: "check_session" }, (resp) => {
             if (!chrome.runtime.lastError && resp && resp.hasSession) {
                 btnType.disabled = false;
