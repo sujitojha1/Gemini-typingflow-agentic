@@ -8,7 +8,7 @@
 
 ## Phase 2: Semantic Chunk Identification
 - Send indexed text blocks and image positions to the LLM
-- LLM groups related consecutive text blocks into 3–8 semantic chunks
+- LLM groups related consecutive text blocks into semantic chunks, ensuring each chunk is strictly under 300 words
 - Each chunk carries: grouped original text, semantic tags, source block indices, nearest image index position
 - Fallback: if LLM fails, treat each text block as its own chunk
 

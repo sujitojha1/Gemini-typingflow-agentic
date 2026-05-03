@@ -163,7 +163,7 @@ Return ONLY valid JSON:
   ]
 }
 
-Rules: group related consecutive blocks; 3–8 chunks; preserve original wording; assign nearbyImageIdx by position proximity.`;
+Rules: group related consecutive blocks; generate as many chunks as needed, but each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
 
     try {
         const res = await fetch(url, {

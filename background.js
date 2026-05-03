@@ -35,7 +35,7 @@ Your task is to structure this content into a rich learning payload.
 RULES:
 1. Generate a 'tldr' (a single-sentence summary of the entire page).
 2. Auto-extract an array of 3-5 semantic 'tags' (e.g., "#machinelearning", "#design").
-3. Group the logically related original text chunks together into manageable semantic "nuggets" to preserve the author's voice. Do NOT heavily rewrite the text, just intelligently chunk it.
+3. Group the logically related original text chunks together into manageable semantic "nuggets" to preserve the author's voice. Each nugget MUST be strictly under 300 words. Do NOT heavily rewrite the text, just intelligently chunk it into smaller pieces if necessary.
 4. If an image URL is highly relevant to a specific nugget based on chronological proximity or context, map its URL to 'img_src'. If no image is relevant for that nugget, map 'img_src' as null.
 5. Return a 'star_rating' (integer 1-5): your editorial quality and depth assessment of the article content.
 6. Return a 'coverage_pct' (integer 0-100): the percentage of the page's meaningful content captured across all nuggets combined.
