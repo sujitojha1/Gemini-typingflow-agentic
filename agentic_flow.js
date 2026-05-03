@@ -1,5 +1,5 @@
-// Depends on: background.js globals (MODEL_POOL, GEMMA_MODEL, callGeminiWithModel, callGemmaAPI)
-// Depends on: tools/tool_*.js (toolCalculate, toolSearchNuggets, toolSummarizePage, toolLookupDefinition)
+// Depends on: background.js globals (MODEL_POOL, GEMMA_MODEL, callGeminiWithModel, callGemmaAPI, generateContextualImage, isValidHttpUrl)
+// Depends on: tools/tool_*.js (all tool files loaded before this via importScripts)
 
 // ── Agent utilities ──────────────────────────────────────────────────────────
 
@@ -169,117 +169,191 @@ async function runAgentPipeline(tabId) {
     }
 }
 
-// ── Parallel Agentic Track (function-calling orchestration) ──────────────────
+// ── Parallel Agentic Track ───────────────────────────────────────────────────
+//
+// Pipeline:
+//   Phase 1 — session + index content & images
+//   Phase 2 — LLM identifies semantic chunks from indexed text
+//   Phase 3 — each chunk runs its own async agent loop (parallel)
+//               findMatchingImage | generateChunkImage
+//               getChunkStats → evaluateChunk → refineChunk → updateCoverage
+//   Phase 4 — state handoff: refined nuggets sent to tab overlay
+
+async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey) {
+    const modelId = 'gemini-3.1-flash-lite-preview';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+
+    const prompt = `You are a semantic content analyzer. Group the following text blocks into logical learning chunks.
+
+TEXT BLOCKS (${textBlocks.length} items):
+${JSON.stringify(textBlocks.map(b => ({ idx: b.idx, text: b.text.slice(0, 400) })))}
+
+IMAGE POSITIONS (${imageIndex.length} images):
+${JSON.stringify(imageIndex.map(img => ({ idx: img.idx })))}
+
+Return ONLY valid JSON:
+{
+  "chunks": [
+    {
+      "text": "<grouped original text from related blocks, do not rewrite>",
+      "tags": ["<semantic-tag>"],
+      "blockIndices": [<original block idx values included>],
+      "nearbyImageIdx": <image idx closest in position, or null>
+    }
+  ]
+}
+
+Rules: group related consecutive blocks; 3–8 chunks; preserve original wording; assign nearbyImageIdx by position proximity.`;
+
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { response_mime_type: 'application/json' }
+            })
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonText) return null;
+        return JSON.parse(jsonText).chunks || null;
+    } catch (e) {
+        console.warn('[parallel track] identifySemanticChunks failed:', e.message);
+        return null;
+    }
+}
+
+// Runs all tool steps for a single chunk sequentially, accumulating history.
+// Called in parallel across all chunks via Promise.all.
+async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex) {
+    const history = [];
+
+    // Step 1: Image — find in index by nearbyImageIdx, or generate via Gemini
+    let imgSrc = null;
+    if (chunk.nearbyImageIdx != null && imageIndex[chunk.nearbyImageIdx]) {
+        const matched = imageIndex[chunk.nearbyImageIdx];
+        imgSrc = matched.src;
+        history.push({
+            tool: 'findMatchingImage',
+            input: { chunkIdx, nearbyImageIdx: chunk.nearbyImageIdx },
+            result: { matched: true, src: imgSrc },
+        });
+    } else {
+        const imagePrompt = chunk.text.slice(0, 300) + (chunk.tags?.length ? ' | ' + chunk.tags.join(', ') : '');
+        history.push({
+            tool: 'generateChunkImage',
+            input: { chunkIdx, prompt: imagePrompt },
+        });
+        const generated = await generateContextualImage({ text: chunk.text, tags: chunk.tags || [] });
+        imgSrc = generated.img_src;
+        history[history.length - 1].result = { img_src: imgSrc };
+    }
+
+    // Step 2: Stats
+    const stats = toolGetChunkStats({ text: chunk.text });
+    history.push({ tool: 'getChunkStats', input: { chunkIdx }, result: stats });
+
+    // Step 3: Evaluate
+    const evaluation = await toolEvaluateChunk({ text: chunk.text });
+    history.push({ tool: 'evaluateChunk', input: { chunkIdx }, result: evaluation });
+
+    // Step 4: Refine — only when score is below threshold; skip if evaluation errored
+    let refinedText = chunk.text;
+    if (!evaluation.error && evaluation.score < 4) {
+        const refined = await toolRefineChunk({ text: chunk.text, evaluation });
+        refinedText = refined.refinedText || chunk.text;
+        history.push({ tool: 'refineChunk', input: { chunkIdx, score: evaluation.score }, result: { refinedText } });
+    } else {
+        history.push({
+            tool: 'refineChunk',
+            input: { chunkIdx },
+            result: { refinedText, skipped: true, reason: evaluation.error ? 'eval error' : 'score acceptable' },
+        });
+    }
+
+    // Step 5: Coverage
+    const coverage = await toolUpdateCoverage({ chunkIdx, totalChunks });
+    history.push({ tool: 'updateCoverage', input: { chunkIdx, totalChunks }, result: coverage });
+
+    agentBroadcast(
+        tabId,
+        `Chunk ${chunkIdx + 1}/${totalChunks}: done`,
+        'Gemini Flash Lite',
+        `score:${evaluation.score ?? '?'} cov:${coverage.coverage}%`
+    );
+
+    return { chunkIdx, text: chunk.text, refinedText, imgSrc, tags: chunk.tags, stats, evaluation, coverage: coverage.coverage, history };
+}
 
 async function runAgenticParallelTrack(tabId, payload) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return;
 
-    let instructText = "";
-    try {
-        const url = chrome.runtime.getURL('instruct.md');
-        const res = await fetch(url);
-        instructText = await res.text();
-    } catch(e) {
-        console.warn("[agent loop] Failed to read instruct.md", e);
-        return;
+    const modelId = 'gemini-3.1-flash-lite-preview';
+
+    // Phase 1: Session + index
+    const sessionId = 'session_' + Date.now();
+    agentBroadcast(tabId, 'Parallel Track: session created', modelId, sessionId);
+
+    const imageIndex = payload
+        .filter(p => p.type === 'image' && isValidHttpUrl(p.src))
+        .map((img, idx) => ({ idx, src: img.src }));
+
+    const textBlocks = payload
+        .filter(p => p.type === 'text' && p.text?.trim())
+        .map((b, idx) => ({ idx, text: b.text }));
+
+    await chrome.storage.local.set({
+        [`tf_pt_${sessionId}_images`]: imageIndex,
+        [`tf_pt_${sessionId}_texts`]: textBlocks,
+        tf_pt_coverage: [],
+    });
+
+    agentBroadcast(tabId, 'Parallel Track: content indexed', modelId,
+        `${textBlocks.length} text blocks · ${imageIndex.length} images`);
+
+    // Phase 2: LLM identifies semantic chunks
+    agentBroadcast(tabId, 'Parallel Track: identifying semantic chunks', modelId);
+    let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey);
+
+    if (!chunks?.length) {
+        // Fallback: one chunk per text block
+        chunks = textBlocks.map(b => ({ text: b.text, tags: [], blockIndices: [b.idx], nearbyImageIdx: null }));
     }
 
-    const tools = [{
-        functionDeclarations: [
-            {
-                name: "createSession",
-                description: "Generate a unique timestamp-based sessionId and securely set up a temporary workspace folder to isolate this processing run."
-            },
-            {
-                name: "saveInitialContent",
-                description: "Securely cache the extracted payload (text blocks and image URLs) into the temporary folder. This cached file serves as the raw material for the agent's deep processing.",
-                parameters: {
-                    type: "OBJECT",
-                    properties: { tempFolderPath: { type: "STRING" } },
-                    required: ["tempFolderPath"]
-                }
-            },
-            {
-                name: "processChunk",
-                description: "Pass the saved chunk data and instruct the agent to run a parallel background task using the gemma-4-31b-it model. The agent must deeply refine the structured nuggets by processing text and base64 images simultaneously for accurate visual mapping."
-            },
-            {
-                name: "stateHandoff",
-                description: "Ensure the extension seamlessly switches to these later chunks without interrupting the user's active session."
-            }
-        ]
-    }];
+    agentBroadcast(tabId, `Parallel Track: ${chunks.length} chunks — starting async loops`, modelId);
 
-    const modelId = "gemini-3.1-flash-lite-preview";
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+    // Phase 3: All chunk agent loops run in parallel
+    const chunkResults = await Promise.all(
+        chunks.map((chunk, idx) =>
+            runChunkAgentLoop(tabId, chunk, idx, chunks.length, imageIndex)
+        )
+    );
 
-    let history = [
-        { role: "user", parts: [{ text: `You are the orchestrator for the parallel agentic track. Follow these instructions step-by-step by calling the provided tools sequentially:\n\n${instructText}` }] }
-    ];
+    // Phase 4: Assemble refined data and hand off to tab overlay
+    const refinedData = {
+        nuggets: chunkResults.map(r => ({
+            text: r.refinedText,
+            img_src: r.imgSrc,
+            tags: r.tags,
+            stats: r.stats,
+            coverage: r.coverage,
+        })),
+        sessionId,
+        processHistory: chunkResults.map(r => ({ chunkIdx: r.chunkIdx, steps: r.history })),
+    };
 
-    let gemmaRefinedData = null;
+    await chrome.storage.local.set({ tf_pt_refined: refinedData });
 
-    for (let i = 0; i < 10; i++) {
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: history, tools: tools })
-        });
+    chrome.tabs.sendMessage(tabId,
+        { action: 'update_nuggets', data: refinedData },
+        () => { chrome.runtime.lastError; }
+    );
 
-        if (!response.ok) {
-            console.warn("[agent loop] API error:", await response.text());
-            break;
-        }
-
-        const data = await response.json();
-        const candidate = data.candidates?.[0];
-        if (!candidate) break;
-
-        history.push(candidate.content);
-
-        const parts = candidate.content.parts || [];
-        const functionCallPart = parts.find(p => p.functionCall);
-
-        if (functionCallPart) {
-            const name = functionCallPart.functionCall.name;
-            agentBroadcast(tabId, `Agent Call: ${name}`, modelId);
-
-            let funcResult = { status: "Success" };
-
-            if (name === "createSession") {
-                funcResult = { sessionId: "session_" + Date.now(), tempFolderPath: "/tmp/agent_workspace" };
-            } else if (name === "saveInitialContent") {
-                funcResult = { cachedBytes: JSON.stringify(payload).length };
-            } else if (name === "processChunk") {
-                agentBroadcast(tabId, 'refining with Gemma 4', 'Gemma 4 31B');
-                const gemmaRes = await callGemmaAPI(payload);
-                if (gemmaRes.success) {
-                    gemmaRefinedData = gemmaRes.api_response;
-                    funcResult = { status: "Refined", nuggetCount: gemmaRefinedData.nuggets?.length };
-                } else {
-                    funcResult = { status: "Failed", error: gemmaRes.error };
-                }
-            } else if (name === "stateHandoff") {
-                if (gemmaRefinedData) {
-                    chrome.tabs.sendMessage(tabId,
-                        { action: 'update_nuggets', data: gemmaRefinedData },
-                        () => { chrome.runtime.lastError; });
-                    agentBroadcast(tabId, 'refined', 'Gemma 4 31B');
-                }
-                funcResult = { status: "Handoff Complete" };
-            }
-
-            history.push({
-                role: "user",
-                parts: [{ functionResponse: { name: name, response: funcResult } }]
-            });
-
-            if (name === "stateHandoff") break;
-        } else {
-            history.push({ role: "user", parts: [{ text: "Please continue executing the next step using function calling." }]});
-        }
-    }
+    agentBroadcast(tabId, 'Parallel Track: complete', modelId,
+        `${chunkResults.length} chunks refined & handed off`);
 }
 
 // ── Agent Loop (ReAct-style tool use) ────────────────────────────────────────
