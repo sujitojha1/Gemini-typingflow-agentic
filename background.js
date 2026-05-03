@@ -1,9 +1,15 @@
 const GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
+const GEMMA_MODEL = "gemma-4-31b-it";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "proxy_gemma_api") {
+        console.log("[typingflow] Routing to Gemma 4 API...");
+        callGemmaAPI(request.payload).then(sendResponse);
+        return true;
+    }
     if (request.action === "proxy_gemini_api") {
-        console.log("[typingflow] Routing to text API...");
+        console.log("[typingflow] Routing to Gemini text API...");
         callGeminiAPI(request.payload).then(sendResponse);
         return true;
     }
@@ -39,6 +45,69 @@ EXPECTED JSON SCHEMA:
     }
   ]
 }`;
+
+async function callGemmaAPI(payload) {
+    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
+    if (!geminiApiKey) {
+        return { error: "API Key not configured. Please initialize your key in the Options panel." };
+    }
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMMA_MODEL}:generateContent?key=${geminiApiKey}`;
+
+    const textItems  = payload.filter(p => p.type === 'text');
+    const imageItems = payload.filter(p => p.type === 'image' && isValidHttpUrl(p.src));
+
+    const parts = [
+        { text: SYSTEM_PROMPT + '\n\nRAW SCRAPED CONTENT:\n' + JSON.stringify(textItems) }
+    ];
+
+    // Fetch up to 5 page images in parallel and attach as inlineData for visual chunk-mapping
+    const imageResults = await Promise.allSettled(
+        imageItems.slice(0, 5).map(async (img) => {
+            const r = await fetch(img.src);
+            if (!r.ok) throw new Error(`${r.status}`);
+            const buf = await r.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            const CHUNK = 8192;
+            let bin = '';
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+                bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+            }
+            return { mimeType: r.headers.get('content-type') || 'image/jpeg', data: btoa(bin) };
+        })
+    );
+    for (const r of imageResults) {
+        if (r.status === 'fulfilled') parts.push({ inlineData: r.value });
+    }
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts }],
+                generationConfig: { response_mime_type: "application/json" }
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            return { error: `Gemma API Error (${response.status}): ${errorData.error?.message || response.statusText}` };
+        }
+
+        const data = await response.json();
+        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonText) return { error: "Gemma returned an empty response." };
+        return { success: true, api_response: JSON.parse(jsonText) };
+    } catch (error) {
+        return { error: `Gemma request failed: ${error.message}` };
+    }
+}
+
+function isValidHttpUrl(str) {
+    try { const u = new URL(str); return u.protocol === 'https:' || u.protocol === 'http:'; }
+    catch { return false; }
+}
 
 async function callGeminiAPI(payload) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');

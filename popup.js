@@ -72,6 +72,19 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const tabId = tabs[0].id;
 
+            const mountAndOpen = (json) => {
+                updateLoader('Rendering Image Assets via Flash 2.5');
+                chrome.tabs.sendMessage(tabId, { action: "mount_ui", data: json }, () => {
+                    if (chrome.runtime.lastError) console.error(chrome.runtime.lastError.message);
+                    hideLoader();
+                    btnType.disabled = false;
+                    btnExtract.innerText = "Extract New Insights";
+                    btnExtract.disabled = false;
+                    chrome.tabs.sendMessage(tabId, { action: "open_overlay" });
+                    window.close();
+                });
+            };
+
             const handleExtractionResponse = (resp) => {
                 if (!resp || !resp.payload) {
                     updateLoader('DOM Extraction Failed');
@@ -79,34 +92,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                updateLoader('Synthesizing with Gemini Flash Lite 3.1 Preview');
-                chrome.runtime.sendMessage({ action: "proxy_gemini_api", payload: resp.payload }, (apiResp) => {
-                    if (chrome.runtime.lastError) {
-                        updateLoader('Error: Background Service Worker offline');
-                        btnExtract.disabled = false;
+                // Agentic Tweak 2: Gemma 4 primary, Gemini Flash Lite fallback
+                updateLoader('Analysing with Gemma 4 (Google AI)');
+                chrome.runtime.sendMessage({ action: "proxy_gemma_api", payload: resp.payload }, (gemmaResp) => {
+                    if (!chrome.runtime.lastError && gemmaResp?.success) {
+                        console.log('[typingflow] Gemma 4 succeeded.');
+                        mountAndOpen(gemmaResp.api_response);
                         return;
                     }
-
-                    if (apiResp.error) {
-                        updateLoader(`Error: ${apiResp.error}`);
-                        btnExtract.disabled = false;
-                        return;
-                    }
-
-                    const json = apiResp.api_response;
-                    updateLoader('Rendering Image Assets via Flash 2.5');
-                    
-                    chrome.tabs.sendMessage(tabId, { action: "mount_ui", data: json }, () => {
+                    console.warn('[typingflow] Gemma 4 failed, falling back to Gemini.', gemmaResp?.error);
+                    updateLoader('Synthesizing with Gemini Flash Lite 3.1 Preview');
+                    chrome.runtime.sendMessage({ action: "proxy_gemini_api", payload: resp.payload }, (apiResp) => {
                         if (chrome.runtime.lastError) {
-                            console.error(chrome.runtime.lastError.message);
+                            updateLoader('Error: Background Service Worker offline');
+                            btnExtract.disabled = false;
+                            return;
                         }
-                        hideLoader();
-                        btnType.disabled = false;
-                        btnExtract.innerText = "Extract New Insights";
-                        btnExtract.disabled = false;
-                        // Auto-open gallery immediately after mount
-                        chrome.tabs.sendMessage(tabId, { action: "open_overlay" });
-                        window.close();
+                        if (apiResp.error) {
+                            updateLoader(`Error: ${apiResp.error}`);
+                            btnExtract.disabled = false;
+                            return;
+                        }
+                        mountAndOpen(apiResp.api_response);
                     });
                 });
             };

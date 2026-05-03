@@ -91,7 +91,24 @@ On popup open (before any API call), `chrome.scripting.executeScript` runs an in
 
 ---
 
-### Tweak 2 — Readability & Complexity Score *(planned)*
+### Tweak 2 — Gemma 4 via Google AI as Primary Structuring Engine ✅
+**Status:** Complete
+
+After DOM extraction, `background.js` sends text chunks + up to 5 page images (fetched as base64 `inlineData` in parallel) to `gemma-4-31b-it` via the Google AI API. Falls back to Gemini Flash Lite silently on any error.
+
+| Step | Detail |
+|---|---|
+| **Model** | `gemma-4-31b-it` via `generativelanguage.googleapis.com` |
+| **API key** | Same `geminiApiKey` from `chrome.storage.sync` |
+| **Input** | Text chunks array + up to 5 page images fetched as base64 `inlineData` parts |
+| **Task** | Identify chunk count, visually map chunks to images, return nuggets JSON |
+| **Fallback** | Any Gemma error silently falls back to `gemini-3.1-flash-lite-preview` |
+
+**Loader states:**
+- `Analysing with Gemma 4 (Google AI)...` — primary path
+- `Synthesizing with Gemini Flash Lite 3.1 Preview...` — fallback only
+
+### Tweak 3 — Readability & Complexity Score *(planned)*
 Before extraction, score the page for estimated reading time, sentence complexity (avg words/sentence), and vocabulary density. Surface as a second row of chips: `~6 min read · complexity: medium`.
 
 ### Tweak 3 — Smart Nugget Count Estimation *(planned)*
