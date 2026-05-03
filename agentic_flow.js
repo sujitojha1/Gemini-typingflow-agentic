@@ -135,8 +135,8 @@ async function runAgentPipeline(tabId) {
 //   Phase 1 — session + index content & images
 //   Phase 2 — LLM identifies semantic chunks from indexed text
 //   Phase 3 — each chunk runs its own async agent loop (parallel)
-//               findMatchingImage | generateChunkImage
-//               getChunkStats → evaluateChunk → refineChunk → updateCoverage
+//               checkRelevance → findMatchingImage | generateChunkImage
+//               getChunkStats → extractSubject → evaluateChunk → refineChunk → updateCoverage
 //   Phase 4 — state handoff: refined nuggets sent to tab overlay
 
 async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey) {
@@ -189,6 +189,21 @@ Rules: group related consecutive blocks; 3–8 chunks; preserve original wording
 // Called in parallel across all chunks via Promise.all.
 async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex) {
     const history = [];
+
+    // Step 0: Check relevance
+    const relevance = await toolCheckRelevance({ text: chunk.text });
+    history.push({ tool: 'checkRelevance', input: { chunkIdx }, result: relevance });
+    if (relevance.isAd) {
+        agentBroadcast(
+            tabId,
+            `Chunk ${chunkIdx + 1}/${totalChunks}: dropped (Ad/Irrelevant)`,
+            'Gemini Flash Lite',
+            relevance.reason
+        );
+        const coverage = await toolUpdateCoverage({ chunkIdx, totalChunks });
+        history.push({ tool: 'updateCoverage', input: { chunkIdx, totalChunks }, result: coverage });
+        return { chunkIdx, isAd: true, history };
+    }
 
     // Step 1: Image — find in index by nearbyImageIdx, or generate via Gemini
     let imgSrc = null;
@@ -298,8 +313,10 @@ async function runAgenticParallelTrack(tabId, payload) {
     );
 
     // Phase 4: Assemble refined data and hand off to tab overlay
+    const validResults = chunkResults.filter(r => !r.isAd);
+
     const refinedData = {
-        nuggets: chunkResults.map(r => ({
+        nuggets: validResults.map(r => ({
             text: r.refinedText,
             img_src: r.imgSrc,
             tags: r.tags,
