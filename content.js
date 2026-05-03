@@ -84,7 +84,21 @@ const INJECT_CSS = `
   .tf-image-panel img { width: 100%; height: auto; object-fit: contain; display: block; max-height: 500px; }
   
   .tf-typing-panel { flex: 1; position: relative; }
-  .tf-nugget-name { color: #666; font-size: 13px; margin-bottom: 24px; font-family: 'Menlo', monospace; }
+
+  .tf-progress-bar {
+    display: flex; align-items: center; gap: 14px; margin-bottom: 24px;
+  }
+  .tf-pips { display: flex; gap: 5px; align-items: center; }
+  .tf-pip {
+    width: 28px; height: 3px; border-radius: 2px; background: #2a2a2a;
+    transition: background 0.3s ease;
+  }
+  .tf-pip.done { background: #27c93f; }
+  .tf-pip.active { background: #4a8cd4; box-shadow: 0 0 6px rgba(74, 140, 212, 0.5); }
+  .tf-progress-label {
+    color: #555; font-size: 12px; font-family: 'Menlo', monospace; letter-spacing: 0.3px;
+  }
+  .tf-progress-label strong { color: #ECEBDE; font-weight: 600; }
   
   #tf-target { font-size: 18px; line-height: 1.8; color: #555; white-space: pre-wrap; word-break: break-word; outline: none; }
   .tf-char.correct { color: #ECEBDE; }
@@ -265,6 +279,12 @@ function renderCurrentNugget() {
     const textToType = nugget.text.replace(/\s+/g, ' ');
     const isFirst = currentNuggetIndex === 0;
     const hasImage = !!nugget.img_src;
+    const total = sessionData.nuggets.length;
+    const current = currentNuggetIndex + 1;
+    const pipsHtml = sessionData.nuggets.map((_, i) => {
+        const cls = i < currentNuggetIndex ? 'done' : i === currentNuggetIndex ? 'active' : '';
+        return `<span class="tf-pip ${cls}"></span>`;
+    }).join('');
 
     overlayWrapper.innerHTML = `
         <div class="tf-topbar">
@@ -289,7 +309,10 @@ function renderCurrentNugget() {
         <div class="tf-main-container">
             <div class="tf-image-panel" id="tf-image-panel-${capturedIndex}"></div>
             <div class="tf-typing-panel">
-                <div class="tf-nugget-name">nugget_${currentNuggetIndex + 1}_of_${sessionData.nuggets.length}.txt</div>
+                <div class="tf-progress-bar">
+                    <div class="tf-pips">${pipsHtml}</div>
+                    <span class="tf-progress-label"><strong>${current}</strong> of ${total}</span>
+                </div>
                 <div id="tf-target"></div>
                 <input type="text" class="tf-hidden-input" id="tf-type-input" autocomplete="off" spellcheck="false" />
             </div>
