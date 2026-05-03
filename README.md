@@ -1,102 +1,106 @@
-<div align="center">
+# Gemini TypingFlow
 
-<img src="icons/icon.svg" alt="TypingFlow Agent" width="90" height="90">
+An intelligent Chrome extension that transforms dense web articles into active-recall typing sessions, powered by the Google Gemini API.
 
-# TypingFlow Agent
-
-### A Chrome extension that thinks before it speaks
-
-[![Manifest V3](https://img.shields.io/badge/Manifest-V3-4F46E5?style=for-the-badge&logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Gemini AI](https://img.shields.io/badge/Gemini-2.0_Flash-8B5CF6?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
-[![License MIT](https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge)](./LICENSE)
-
-Captures text from any field on any page, runs it through a **transparent four-stage AI pipeline**, and delivers a structured writing report — with every tool call visible in a live reasoning chain.
-
-</div>
+It extracts page content, structures it into semantic nuggets via LLM, generates contextual visuals, and drops you into a focused typing interface — burning key ideas into memory, not just passive reading.
 
 ---
 
-## How It Works
+## Features
 
-```mermaid
-flowchart LR
-    A([📝 Your text]) --> B["📊 count_stats\nwords · sentences\nparagraphs"]
-    B --> C["✂️ chunk_text\nsplit into N\ncoherent chunks"]
-    C --> D["📝 summarize_chunk\none sentence\nper chunk"]
-    D --> E["⭐ score_chunk\nreadability · clarity\ncoherence 1–10"]
-    E --> F(["🧠 Final report\noverall score\ntop issues · fixes"])
+### LLM-Powered Semantic Structuring
+Gemini analyzes the full page and returns a structured JSON payload:
+- **TL;DR** — single-sentence page summary
+- **Tags** — auto-extracted semantic domain tags (e.g. `#machinelearning`)
+- **Nuggets** — logically grouped chunks of the original author's text, preserving voice
+- **Star Rating** — Gemini's 1–5 editorial quality and depth assessment of the article
+- **Coverage %** — percentage of the page's meaningful content captured across nuggets
 
-    style A fill:#4F46E5,color:#fff,stroke:none
-    style B fill:#0891b2,color:#fff,stroke:none
-    style C fill:#7c3aed,color:#fff,stroke:none
-    style D fill:#d97706,color:#fff,stroke:none
-    style E fill:#059669,color:#fff,stroke:none
-    style F fill:#1e293b,color:#fff,stroke:none
+### Nugget Gallery (Between-Screen)
+After extraction, a full-screen gallery opens automatically showing all nuggets as cards before typing begins:
+- `[01] — click to type ›` label per card with amber left-border accent
+- Thumbnail image (if pre-existing from the page) or hexagon placeholder
+- 200-char text preview
+- Star rating (★★★★☆) and coverage progress bar in the header
+- Click any card to jump directly into typing that nugget
+- `☰ all` button in the typing view returns to the gallery at any time
+
+### Active Recall Typing Interface
+A full-screen monospace overlay with:
+- Character-by-character real-time validation (green correct / red wrong)
+- Live WPM and accuracy stats
+- Prev / Next nugget navigation
+- Contextual image panel (sticky, left side)
+- Auto-advances to the next nugget on perfect completion
+
+### Hybrid Visual Context
+- Page images semantically matched to nuggets by the LLM are preserved and displayed
+- For nuggets without a page image, **gemini-2.5-flash-image** generates a representative visual in the background
+- All images are returned as base64 `data:` URIs from the background service worker, bypassing page Content-Security-Policy restrictions
+
+### Second Brain Markdown Export
+On session completion, one click exports an Obsidian/Notion-ready `.md` file:
+- YAML frontmatter with date, tags, and source URL
+- TL;DR block quote
+- Each nugget formatted as a section with embedded image
+
+---
+
+## Architecture
+
+| File | Role |
+|---|---|
+| `manifest.json` | MV3 manifest — permissions, service worker declaration |
+| `background.js` | Secure proxy to Gemini APIs; handles text structuring and image generation; converts fallback images to base64 data URLs to bypass CSP |
+| `content.js` | DOM extraction, full overlay UI (gallery + typing), markdown export |
+| `popup.js` | Extension popup — triggers extraction, shows loader states, auto-opens gallery on completion |
+| `popup.html` | Terminal-styled popup UI |
+| `options.html` / `options.js` | API key management (stored in `chrome.storage.sync`) |
+
+### Data Flow
+
+```
+User clicks Extract
+  → popup.js extracts DOM via content.js
+  → background.js calls gemini-3.1-flash-lite-preview
+  → JSON payload (tldr, tags, nuggets, star_rating, coverage_pct) returned
+  → content.js mounts session data
+  → Gallery screen auto-opens (popup closes)
+  → User clicks any nugget card
+  → Typing overlay renders; background starts image generation via gemini-2.5-flash-image
+  → On completion → Markdown export
 ```
 
-The agent runs this pipeline via **Gemini function calling** — Gemini decides when to call each tool, and the full conversation history is passed on every turn so later stages have complete context.
+---
+
+## Setup
+
+1. Clone the repo and load it as an unpacked extension in `chrome://extensions` (Developer Mode on)
+2. Click the extension icon → Options → paste your Gemini API key → Save
+3. Navigate to any article and click the extension icon → **Extract**
+4. The nugget gallery opens automatically — click any card to start typing
 
 ---
 
-## What You See
+## Models Used
 
-```
-┌─────────────────────────────────────────────┐
-│  🔵 TF  TypingFlow Agent               ⚙   │
-├─────────────────────────────────────────────┤
-│  CAPTURED TEXT              312 words        │
-│  The borrow checker enforces Rust's…         │
-│  ↻ Refresh from page                         │
-├─────────────────────────────────────────────┤
-│  Analyse my writing and give a full report.  │
-│                         ▶ Run Agent          │
-├─────────────────────────────────────────────┤
-│  REASONING CHAIN                             │
-│  ├ 📊 count_stats   312 words · 21 sentences │
-│  ├ ✂️  chunk_text   3 chunks produced         │
-│  ├ 📝 summarize_chunk  "Introduces owner…"   │
-│  ├ 📝 summarize_chunk  "Explains borrow…"    │
-│  ├ ⭐ score_chunk   R:7  C:5  Co:8  avg:6.7  │
-│  └ ⭐ score_chunk   R:8  C:7  Co:9  avg:8.0  │
-├─────────────────────────────────────────────┤
-│  FINAL REPORT          Overall: 7.1 / 10     │
-│  • Clarity weakest — terms undefined in §1   │
-│  • Avg sentence length 26 words in §3        │
-│                         [ Copy report ]      │
-└─────────────────────────────────────────────┘
-```
-
-Each card is collapsible — click any step to see the raw args and result JSON.
+| Purpose | Model |
+|---|---|
+| Text structuring & nugget extraction | `gemini-3.1-flash-lite-preview` |
+| Contextual image generation | `gemini-2.5-flash-image` |
 
 ---
 
-## Tools
+## Security Notes
 
-| Tool | Type | What it returns |
-|---|---|---|
-| `count_stats` | ⚡ Local | Words, sentences, paragraphs, avg length, reading time |
-| `chunk_text` | ⚡ Local | Array of ≤8 chunks (paragraph → sentence boundary splitting) |
-| `summarize_chunk` | 🌐 Gemini | One-sentence distillation per chunk |
-| `score_chunk` | 🌐 Gemini | Readability · Clarity · Coherence scores (1–10) + feedback |
-
----
-
-## Quick Start
-
-```bash
-git clone https://github.com/sujitojha1/Gemini-typingflow-agentic.git
-```
-
-1. Open `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the folder
-2. Click the **TF** icon → paste your [Gemini API key](https://aistudio.google.com/app/apikey) → **Save**
-3. Focus any text field → click **TF** → **↻ Refresh** → **▶ Run Agent**
-
-> Free tier on [Google AI Studio](https://aistudio.google.com) is sufficient.
-
+- API key is stored in `chrome.storage.sync` (synced across signed-in Chrome profiles)
+- All Gemini API calls are proxied through `background.js` — the key is never exposed to page-level content scripts
+- Image panel and char spans are built via DOM methods (`createElement` / `textContent`) — no `innerHTML` interpolation of API-supplied content
+- Image URLs from the API are validated against `http:`/`https:` protocol before being set as `img.src`
+- Async image callbacks capture nugget index at request time (`capturedIndex`) to prevent race conditions during navigation
 
 ---
-<div align="center">
 
-Apache License · 
+## Development
 
-</div>
+See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the full phase-by-phase build history.

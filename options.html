@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gemini TypingFlow Options</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0d0c0b; color: #ECEBDE; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background-color: #111010; padding: 40px; border-radius: 8px; border: 1px solid #1a1917; box-shadow: 0 4px 6px rgba(0,0,0,0.3); width: 400px; max-width: 90%; }
+        h1 { font-size: 20px; color: #4a8cd4; margin-top: 0; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-size: 14px; color: #a19d96; }
+        input[type="password"] { width: 100%; box-sizing: border-box; padding: 10px; background-color: #1a1917; border: 1px solid #3a3834; color: #ECEBDE; border-radius: 4px; margin-bottom: 20px; outline: none; transition: border-color 0.2s; }
+        input[type="password"]:focus { border-color: #4a8cd4; }
+        button { background-color: transparent; border: 1px solid #4a8cd4; color: #4a8cd4; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 14px; width: 100%; transition: all 0.2s; }
+        button:hover { background-color: #4a8cd4; color: #0d0c0b; }
+        .status { margin-top: 10px; font-size: 12px; height: 15px; color: #72BE47; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Global Settings</h1>
+        <label for="apiKey">Gemini API Key (Flash Lite 3.1 Preview)</label>
+        <input type="password" id="apiKey" placeholder="Enter your Google Gemini API key" />
+        <button id="saveBtn">Secure API Key</button>
+        <div id="status" class="status"></div>
+    </div>
+    <script src="options.js"></script>
+</body>
+</html>
