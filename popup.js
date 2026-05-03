@@ -12,13 +12,41 @@ document.addEventListener('DOMContentLoaded', () => {
         loader.style.display = 'block';
         loader.innerText = `${msg}...`;
     }
-    
+
     function hideLoader() { loader.style.display = 'none'; }
 
-    // Init Logic: Check if the content script already has processing done for this tab
-    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+    // Agentic Tweak 1: Instant page intelligence scan on popup open
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs || tabs.length === 0) return;
-        chrome.tabs.sendMessage(tabs[0].id, { action: "check_session" }, (resp) => {
+        const tabId = tabs[0].id;
+
+        chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => {
+                const root = document.querySelector('article, main, [role="main"]') || document.body;
+                const textEls = Array.from(root.querySelectorAll('p, h1, h2, h3, li, blockquote'))
+                    .filter(el => !el.closest('nav, header, footer, aside, [role="navigation"]'));
+                const text = textEls.map(el => el.innerText.trim()).join(' ');
+                const charCount = text.replace(/\s/g, '').length;
+                const wordCount = text.split(/\s+/).filter(Boolean).length;
+                const imageCount = Array.from(root.querySelectorAll('img'))
+                    .filter(img => (img.naturalWidth || img.width) > 100 && !img.src.startsWith('data:')).length;
+                return { charCount, wordCount, imageCount };
+            }
+        }, (results) => {
+            if (chrome.runtime.lastError || !results || !results[0]) return;
+            const { charCount, wordCount, imageCount } = results[0].result;
+            const statsEl = document.getElementById('page-stats');
+            const fmt = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+            statsEl.innerHTML = `
+                <div class="page-stat-chip"><span>${fmt(charCount)}</span> chars</div>
+                <div class="page-stat-chip"><span>${fmt(wordCount)}</span> words</div>
+                <div class="page-stat-chip"><span>${imageCount}</span> images</div>
+            `;
+        });
+
+        // Init Logic: Check if a session already exists on this tab
+        chrome.tabs.sendMessage(tabId, { action: "check_session" }, (resp) => {
             if (!chrome.runtime.lastError && resp && resp.hasSession) {
                 btnType.disabled = false;
                 btnExtract.innerText = "Extract New Insights";

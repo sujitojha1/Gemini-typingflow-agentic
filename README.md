@@ -1,4 +1,4 @@
-# Gemini TypingFlow
+# Gemini TypingFlow — Agentic
 
 An intelligent Chrome extension that transforms dense web articles into active-recall typing sessions, powered by the Google Gemini API.
 
@@ -7,6 +7,14 @@ It extracts page content, structures it into semantic nuggets via LLM, generates
 ---
 
 ## Features
+
+### Agentic Page Intelligence
+The extension runs a lightweight DOM scan the instant the popup opens — before any API call — and surfaces a real-time content snapshot:
+- **Char count** — non-whitespace characters in the article body
+- **Word count** — word density of the extractable content
+- **Image count** — qualifying images (>100px, non-data-URI) on the page
+
+This gives an at-a-glance sense of the article's depth before committing to extraction.
 
 ### LLM-Powered Semantic Structuring
 Gemini analyzes the full page and returns a structured JSON payload:
@@ -28,8 +36,9 @@ After extraction, a full-screen gallery opens automatically showing all nuggets 
 ### Active Recall Typing Interface
 A full-screen monospace overlay with:
 - Character-by-character real-time validation (green correct / red wrong)
-- Real-time synthesized audio feedback for keystrokes via Web Audio API
-- Live WPM and accuracy stats
+- **Segmented progress bar** — pip track showing done/active/pending nuggets with "2 of 4" label
+- Real-time synthesized audio feedback (soft click for correct, low thud for wrong) via Web Audio API
+- **Fixed bottom metrics bar** — WPM, accuracy, and char progress in three distinct boxes with a live gradient fill line
 - Prev / Next nugget navigation
 - Contextual image panel (sticky, left side)
 - Auto-advances to the next nugget on perfect completion
@@ -51,16 +60,20 @@ On session completion, one click exports an Obsidian/Notion-ready `.md` file:
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3 manifest — permissions, service worker declaration |
+| `manifest.json` | MV3 manifest — permissions, service worker, options UI declaration |
 | `background.js` | Secure proxy to Gemini APIs; handles text structuring and image generation; converts fallback images to base64 data URLs to bypass CSP |
-| `content.js` | DOM extraction, full overlay UI (gallery + typing), audio feedback synthesis, markdown export |
-| `popup.js` | Extension popup — triggers extraction, dynamically injects content script if missing, shows loader states, auto-opens gallery |
-| `popup.html` | Terminal-styled popup UI with settings access |
+| `content.js` | DOM extraction, full overlay UI (gallery + typing + bottom metrics), audio feedback synthesis, markdown export |
+| `popup.js` | Extension popup — instant page stats scan, triggers extraction, dynamically injects content script if missing, shows loader states, auto-opens gallery |
+| `popup.html` | Dark popup UI with gear settings button and page intelligence chips |
 | `options.html` / `options.js` | API key management (stored in `chrome.storage.sync`) |
 
 ### Data Flow
 
 ```
+Popup opens
+  → chrome.scripting.executeScript scans DOM (chars, words, images)
+  → Stats chips rendered instantly in popup (no API call)
+
 User clicks Extract
   → popup.js extracts DOM via content.js
   → background.js calls gemini-3.1-flash-lite-preview
@@ -77,9 +90,10 @@ User clicks Extract
 ## Setup
 
 1. Clone the repo and load it as an unpacked extension in `chrome://extensions` (Developer Mode on)
-2. Click the extension icon → Options → paste your Gemini API key → Save
-3. Navigate to any article and click the extension icon → **Extract**
-4. The nugget gallery opens automatically — click any card to start typing
+2. Click the extension icon → ⚙ (gear icon, top-right) → paste your Gemini API key → Save
+3. Navigate to any article and click the extension icon — page stats appear instantly
+4. Click **Process Page Intelligence** → the nugget gallery opens automatically
+5. Click any card to start typing
 
 ---
 
@@ -99,6 +113,7 @@ User clicks Extract
 - Image panel and char spans are built via DOM methods (`createElement` / `textContent`) — no `innerHTML` interpolation of API-supplied content
 - Image URLs from the API are validated against `http:`/`https:` protocol before being set as `img.src`
 - Async image callbacks capture nugget index at request time (`capturedIndex`) to prevent race conditions during navigation
+- Page stats scan uses `chrome.scripting.executeScript` with an inline function — no string eval, no external code injection
 
 ---
 

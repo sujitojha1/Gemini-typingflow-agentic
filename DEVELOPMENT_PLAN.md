@@ -1,4 +1,4 @@
-# Development Plan: Gemini TypingFlow
+# Development Plan: Gemini TypingFlow — Agentic
 
 ## Phase 1: Foundation & API Security
 - [x] Initialize project with Manifest V3.
@@ -57,5 +57,48 @@
 
 ## Phase 9: Audio Feedback & Pipeline Polish
 - [x] Integrate Web Audio API for subtle, synthesized sound effects on correct/incorrect keystrokes without requiring external audio file dependencies.
+    - Correct: soft bandpass-filtered white noise burst (~2200 Hz, 50ms decay).
+    - Wrong: sine wave dropping 200→90 Hz through a waveshaper for a dull thud.
+    - Both functions call `ctx.resume()` before playback to bypass Chrome's AudioContext autoplay suspension in content scripts.
 - [x] Implement robust dynamic content script injection in `popup.js` to ensure the extension works seamlessly even if the page was loaded before the extension was updated.
-- [x] Add a direct settings access icon (⚙) in the popup terminal header for easier API key management.
+- [x] Add a direct settings access icon (⚙) in the popup header (top-right) for easier API key management.
+
+## Phase 10: UI Refinements
+- [x] Replace `nugget_2_of_4.txt` filename label with a proper segmented progress bar — pip track (green done, blue active, dark pending) + bold "2 of 4" counter.
+- [x] Move WPM / accuracy / char-progress stats out of the top nav into a fixed bottom bar with three distinct metric boxes and a live gradient progress line at the top edge.
+- [x] Popup header updated to "Gemini TypingFlow — Agentic".
+
+---
+
+## Agentic Tweaks Roadmap
+
+These tweaks layer autonomous, proactive intelligence on top of the base extraction pipeline — moving from a user-triggered tool toward a context-aware learning agent.
+
+### Tweak 1 — Instant Page Intelligence Scan ✅
+**Status:** Complete
+
+On popup open (before any API call), `chrome.scripting.executeScript` runs an inline DOM scan and surfaces three chips in the popup UI:
+
+| Chip | What it measures |
+|---|---|
+| `chars` | Non-whitespace character count in article body |
+| `words` | Word count of extractable text nodes |
+| `images` | Qualifying images (>100px wide, non-data-URI) |
+
+**Why it matters:** Gives the user an instant read on article density without waiting for Gemini. A 12k-char / 2k-word article with 8 images suggests rich multi-nugget output; a 400-char stub suggests low yield before wasting an API call.
+
+**Implementation:** Inline `func:` passed to `executeScript` — no string eval, no content-script message round-trip, zero latency.
+
+---
+
+### Tweak 2 — Readability & Complexity Score *(planned)*
+Before extraction, score the page for estimated reading time, sentence complexity (avg words/sentence), and vocabulary density. Surface as a second row of chips: `~6 min read · complexity: medium`.
+
+### Tweak 3 — Smart Nugget Count Estimation *(planned)*
+Based on char count and paragraph density, predict how many nuggets Gemini is likely to produce and hint this in the Extract button label: `Extract (~4 nuggets)`.
+
+### Tweak 4 — Duplicate / Revisit Detection *(planned)*
+On popup open, check `chrome.storage.local` for a fingerprint (hostname + title hash) of previously extracted pages. If found, show a "Revisit" badge and offer to reload the prior session instead of re-calling the API.
+
+### Tweak 5 — Auto-Extract on High-Confidence Articles *(planned)*
+If the page is a known long-form domain (e.g. substack, medium, arxiv) and char count exceeds a threshold, offer a one-click "Auto-Extract" prompt instead of requiring manual button press.
