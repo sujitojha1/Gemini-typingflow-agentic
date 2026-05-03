@@ -35,9 +35,15 @@ function tabMessage(tabId, msg) {
 }
 
 async function extractFromTab(tabId) {
+    function unwrap(data) {
+        if (!data) return null;
+        // extractPageContent returns { payload: [...], readability } — unwrap if needed
+        return Array.isArray(data) ? data : (data.payload || null);
+    }
     try {
         const resp = await tabMessage(tabId, { action: 'extract_content' });
-        if (resp?.payload) return resp.payload;
+        const result = unwrap(resp?.payload);
+        if (result) return result;
     } catch (_) {}
     await new Promise((resolve, reject) => {
         chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }, r => {
@@ -47,7 +53,7 @@ async function extractFromTab(tabId) {
     });
     await new Promise(r => setTimeout(r, 200));
     const resp = await tabMessage(tabId, { action: 'extract_content' });
-    return resp?.payload || null;
+    return unwrap(resp?.payload);
 }
 
 function callModelForStructuring(payload, model) {
