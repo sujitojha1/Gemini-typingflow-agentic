@@ -55,46 +55,6 @@ function parseLLMResponse(text) {
     throw new Error('Cannot parse: ' + text.slice(0, 200));
 }
 
-// ── Agent Tools Registry ─────────────────────────────────────────────────────
-
-const AGENT_TOOLS = {
-    calculate:        toolCalculate,
-    searchNuggets:    toolSearchNuggets,
-    summarizePage:    toolSummarizePage,
-    lookupDefinition: toolLookupDefinition,
-};
-
-// ── Agent System Prompt ──────────────────────────────────────────────────────
-
-const AGENT_SYSTEM_PROMPT = `You are a helpful AI agent that can use tools to answer questions about web page content.
-
-You have access to the following tools:
-
-1. calculate(expression: string)
-   Evaluate a math expression. Supports: +, -, *, /, **, %, sqrt, abs, round, floor, ceil, sin, cos, tan, log, exp, pow, min, max, sum.
-   Example: calculate({"expression": "sum(exp(1), exp(1), exp(2), exp(3), exp(5), exp(8))"})
-
-2. searchNuggets(query: string)
-   Search the structured knowledge nuggets extracted from the current page.
-   Example: searchNuggets({"query": "transformer attention"})
-
-3. summarizePage({})
-   Get the TL;DR and tags for the current page.
-   Example: summarizePage({})
-
-4. lookupDefinition(term: string)
-   Find sentences in the page that explain a specific term or concept.
-   Example: lookupDefinition({"term": "backpropagation"})
-
-Respond in ONE of these two JSON formats ONLY:
-
-To call a tool:
-{"tool_name": "<name>", "tool_arguments": {"<arg>": "<value>"}}
-
-To give the final answer:
-{"answer": "<your complete answer>"}
-
-RULES: Respond with ONLY the JSON. No markdown, no extra text. Use tools for page info and math. ALWAYS use calculate for numbers.`;
 
 // ── Agent Pipeline ───────────────────────────────────────────────────────────
 
@@ -302,8 +262,8 @@ async function runAgenticParallelTrack(tabId, payload) {
         .map((img, idx) => ({ idx, src: img.src }));
 
     const textBlocks = payload
-        .filter(p => p.type === 'text' && p.text?.trim())
-        .map((b, idx) => ({ idx, text: b.text }));
+        .filter(p => p.type === 'text' && p.content?.trim())
+        .map((b, idx) => ({ idx, text: b.content }));
 
     await chrome.storage.local.set({
         [`tf_pt_${sessionId}_images`]: imageIndex,
@@ -356,101 +316,3 @@ async function runAgenticParallelTrack(tabId, payload) {
         `${chunkResults.length} chunks refined & handed off`);
 }
 
-// ── Agent Loop (ReAct-style tool use) ────────────────────────────────────────
-
-async function runAgentLoop(tabId, userQuery, maxIter = 6) {
-    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
-    if (!geminiApiKey) {
-        chrome.runtime.sendMessage({ action: 'agent_loop_step', step: { type: 'error', text: 'API key not configured' } }, () => { chrome.runtime.lastError; });
-        return;
-    }
-
-    const modelId = 'gemini-3.1-flash-lite-preview';
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
-
-    const messages = [
-        { role: 'system', content: AGENT_SYSTEM_PROMPT },
-        { role: 'user',   content: userQuery },
-    ];
-
-    agentBroadcast(tabId, 'agent loop: starting', modelId);
-
-    for (let iter = 0; iter < maxIter; iter++) {
-        let prompt = '';
-        for (const msg of messages) {
-            if      (msg.role === 'system')    prompt += msg.content + '\n\n';
-            else if (msg.role === 'user')      prompt += `User: ${msg.content}\n\n`;
-            else if (msg.role === 'assistant') prompt += `Assistant: ${msg.content}\n\n`;
-            else if (msg.role === 'tool')      prompt += `Tool Result: ${msg.content}\n\n`;
-        }
-
-        let responseText;
-        try {
-            const res = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error?.message || res.statusText);
-            }
-            const data = await res.json();
-            responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!responseText) throw new Error('Empty response from LLM');
-        } catch (e) {
-            chrome.runtime.sendMessage({ action: 'agent_loop_step', step: { type: 'error', text: e.message } }, () => { chrome.runtime.lastError; });
-            return;
-        }
-
-        let parsed;
-        try {
-            parsed = parseLLMResponse(responseText);
-        } catch (_) {
-            messages.push({ role: 'assistant', content: responseText });
-            messages.push({ role: 'user',      content: 'Please respond with valid JSON only. No markdown, no extra text.' });
-            continue;
-        }
-
-        if (parsed.answer) {
-            chrome.runtime.sendMessage({
-                action: 'agent_loop_step',
-                step: { type: 'answer', text: parsed.answer, iteration: iter + 1 }
-            }, () => { chrome.runtime.lastError; });
-            agentBroadcast(tabId, 'agent loop: complete', modelId);
-            return;
-        }
-
-        if (parsed.tool_name) {
-            const toolName = parsed.tool_name;
-            const toolArgs = parsed.tool_arguments || {};
-
-            if (!(toolName in AGENT_TOOLS)) {
-                const errMsg = JSON.stringify({ error: `Unknown tool: ${toolName}. Available: ${Object.keys(AGENT_TOOLS).join(', ')}` });
-                messages.push({ role: 'assistant', content: responseText });
-                messages.push({ role: 'tool',      content: errMsg });
-                continue;
-            }
-
-            agentBroadcast(tabId, `loop: ${toolName}`, modelId);
-            const toolResult = await Promise.resolve(AGENT_TOOLS[toolName](toolArgs));
-
-            chrome.runtime.sendMessage({
-                action: 'agent_loop_step',
-                step: { type: 'tool_call', toolName, toolArgs, toolResult, iteration: iter + 1 }
-            }, () => { chrome.runtime.lastError; });
-
-            messages.push({ role: 'assistant', content: responseText });
-            messages.push({ role: 'tool',      content: toolResult });
-            continue;
-        }
-
-        messages.push({ role: 'assistant', content: responseText });
-        messages.push({ role: 'user',      content: 'Please respond with valid JSON only.' });
-    }
-
-    chrome.runtime.sendMessage({
-        action: 'agent_loop_step',
-        step: { type: 'error', text: 'Max iterations reached without a final answer.' }
-    }, () => { chrome.runtime.lastError; });
-}

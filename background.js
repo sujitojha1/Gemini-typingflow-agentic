@@ -200,11 +200,6 @@ async function fallbackDataUrl(tags) {
 // so all globals above are available to the imported files at call time.
 
 importScripts(
-    // Query tools (user-facing agent loop)
-    'tools/tool_calculate.js',
-    'tools/tool_search_nuggets.js',
-    'tools/tool_summarize_page.js',
-    'tools/tool_lookup_definition.js',
     // Chunk-processing tools (parallel agentic track)
     'tools/tool_get_chunk_stats.js',
     'tools/tool_evaluate_chunk.js',
@@ -228,11 +223,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     if (request.action === "generate_image_asset") {
         generateContextualImage(request.payload).then(sendResponse);
-        return true;
-    }
-    if (request.action === "run_agent_loop") {
-        runAgentLoop(request.tabId, request.query);
-        sendResponse({ started: true });
         return true;
     }
 });
