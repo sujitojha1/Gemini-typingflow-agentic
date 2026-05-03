@@ -327,8 +327,10 @@ async function runAgenticLoop(tabId, payload) {
     // Phase 2: Chunk identification
     const chunkStart = Date.now();
     agentBroadcast(tabId, '[Agent] Chunking', initModel.label);
-    let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey);
+    let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey, tabId);
     if (!chunks?.length) {
+        agentBroadcast(tabId, '[Agent] Chunking fallback', null,
+            'all models failed — using raw text blocks');
         chunks = textBlocks.map(b => ({ text: b.text, tags: [], blockIndices: [b.idx], nearbyImageIdx: null }));
     }
     agentBroadcast(tabId, '[Agent] Chunks ready', initModel.label,
@@ -342,18 +344,39 @@ async function runAgenticLoop(tabId, payload) {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
         const turnStart = Date.now();
 
-        // ── Call LLM ─────────────────────────────────────────────────────────
-        // Pick a random model for this turn
-        const turnModel = pickAgentModel();
+        // ── Call LLM with model rotation failsafe ────────────────────────────
+        let turnModel = pickAgentModel();
         agentBroadcast(tabId, '[Agent] Thinking...', turnModel.label, `Turn ${turn + 1}...`);
 
         let action;
-        try {
-            action = await callAgent(messages, geminiApiKey, turnModel.id);
-        } catch (e) {
-            console.warn('[agent] LLM error:', e.message);
-            agentBroadcast(tabId, '[Agent] LLM error', turnModel.label, e.message);
-            break;
+        {
+            const triedIds = new Set([turnModel.id]);
+            let modelAttempt = 0;
+            const MAX_MODEL_RETRIES = 5;
+            while (true) {
+                try {
+                    action = await callAgent(messages, geminiApiKey, turnModel.id);
+                    break;
+                } catch (e) {
+                    modelAttempt++;
+                    console.warn(`[agent] ${turnModel.label} failed (attempt ${modelAttempt}):`, e.message);
+                    agentBroadcast(tabId, '[Agent] Model failed', turnModel.label,
+                        `attempt ${modelAttempt}/${MAX_MODEL_RETRIES} — ${e.message}`);
+                    if (modelAttempt >= MAX_MODEL_RETRIES) {
+                        agentBroadcast(tabId, '[Agent] All retries exhausted', turnModel.label,
+                            `${MAX_MODEL_RETRIES} models tried, aborting loop`);
+                        return;
+                    }
+                    const candidates = AGENT_MODEL_POOL.filter(m => !triedIds.has(m.id));
+                    const next = candidates.length
+                        ? candidates[Math.floor(Math.random() * candidates.length)]
+                        : AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
+                    triedIds.add(next.id);
+                    turnModel = next;
+                    agentBroadcast(tabId, '[Agent] Rotating model', turnModel.label,
+                        `retry ${modelAttempt + 1}/${MAX_MODEL_RETRIES}`);
+                }
+            }
         }
         const llmMs = Date.now() - turnStart;
 
@@ -475,10 +498,7 @@ async function runAgenticLoop(tabId, payload) {
 
 // ── Semantic chunk identification ────────────────────────────────────────────
 
-async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey) {
-    const chunkModelId = pickAgentModel().id;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${chunkModelId}:generateContent?key=${geminiApiKey}`;
-
+async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey, tabId) {
     const prompt = `You are a semantic content analyzer. Group the following text blocks into logical learning chunks.
 
 TEXT BLOCKS (${textBlocks.length} items):
@@ -501,22 +521,56 @@ Return ONLY valid JSON:
 
 Rules: group related consecutive blocks; each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
 
-    try {
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' },
-            }),
-        });
-        if (!res.ok) return null;
-        const data = await res.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!jsonText) return null;
-        return JSON.parse(jsonText).chunks || null;
-    } catch (e) {
-        console.warn('[agent] identifySemanticChunks failed:', e.message);
-        return null;
+    const triedIds = new Set();
+    const MAX_MODEL_RETRIES = 5;
+
+    for (let attempt = 0; attempt < MAX_MODEL_RETRIES; attempt++) {
+        const candidates = AGENT_MODEL_POOL.filter(m => !triedIds.has(m.id));
+        const model = candidates.length
+            ? candidates[Math.floor(Math.random() * candidates.length)]
+            : AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
+        triedIds.add(model.id);
+
+        agentBroadcast(tabId, '[Agent] Chunking model', model.label,
+            `attempt ${attempt + 1}/${MAX_MODEL_RETRIES}`);
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { response_mime_type: 'application/json' },
+                }),
+            });
+            if (!res.ok) {
+                const errText = await res.text().catch(() => res.status);
+                console.warn(`[agent] chunking ${model.label} HTTP ${res.status}:`, errText);
+                agentBroadcast(tabId, '[Agent] Chunking failed', model.label,
+                    `HTTP ${res.status} — rotating model`);
+                continue;
+            }
+            const data = await res.json();
+            const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!jsonText) {
+                agentBroadcast(tabId, '[Agent] Chunking empty', model.label,
+                    'no content in response — rotating model');
+                continue;
+            }
+            const chunks = JSON.parse(jsonText).chunks || null;
+            if (!chunks?.length) {
+                agentBroadcast(tabId, '[Agent] Chunking invalid', model.label,
+                    'parsed 0 chunks — rotating model');
+                continue;
+            }
+            return chunks;
+        } catch (e) {
+            console.warn(`[agent] chunking ${model.label} threw:`, e.message);
+            agentBroadcast(tabId, '[Agent] Chunking error', model.label,
+                `${e.message} — rotating model`);
+        }
     }
+
+    return null;
 }
