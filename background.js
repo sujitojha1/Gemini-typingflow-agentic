@@ -1,20 +1,20 @@
-// const GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
-// const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
-// const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
+const GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
+const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
+const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
 // Model pool for primary structuring — tried in order, rotates on failure
 const MODEL_POOL = [
-    // { id: 'gemini-3.1-flash-lite-preview',  label: 'Gemini Flash Lite', vision: false },
-    // { id: 'gemini-3-flash-preview',          label: 'Gemini 3 Flash',   vision: false },
-    // { id: 'gemini-2.5-flash-lite',           label: 'Gemini 2.5 Lite',  vision: false },
+    { id: 'gemini-3.1-flash-lite-preview',  label: 'Gemini Flash Lite', vision: false },
+    { id: 'gemini-3-flash-preview',          label: 'Gemini 3 Flash',   vision: false },
+    { id: 'gemini-2.5-flash-lite',           label: 'Gemini 2.5 Lite',  vision: false },
     { id: 'gemma-4-26b-a4b-it',             label: 'Gemma 4 26B',      vision: true  },
     { id: 'gemma-4-31b-it',             label: 'Gemma 4 31B',      vision: true  },
 ];
 
 // Agent model pool — randomly rotated per LLM call for agentic tools & ReAct loop
 const AGENT_MODEL_POOL = [
-    // { id: 'gemini-3.1-flash-lite-preview',  label: 'Flash Lite' },
-    // { id: 'gemini-3-flash-preview',          label: 'Flash 3' },
+    { id: 'gemini-3.1-flash-lite-preview',  label: 'Flash Lite' },
+    { id: 'gemini-3-flash-preview',          label: 'Flash 3' },
     { id: 'gemma-4-26b-a4b-it',             label: 'Gemma 4 26B' },
     { id: 'gemma-4-31b-it',             label: 'Gemma 4 31B' },
 ];
