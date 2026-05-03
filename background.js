@@ -17,6 +17,14 @@ const AGENT_MODEL_POOL = [
     { id: 'gemma-4-31b-it',     label: 'Gemma 4 31B' },
 ];
 
+// Chunking model pool — fast Gemini flash models for the one-time semantic grouping pre-step
+// (Gemma models are too slow / unreliable for the large chunking prompt)
+const CHUNKING_MODEL_POOL = [
+    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini Flash Lite' },
+    { id: 'gemini-3-flash-preview',        label: 'Gemini 3 Flash' },
+    { id: 'gemini-2.5-flash-lite',         label: 'Gemini 2.5 Lite' },
+];
+
 function pickAgentModel() {
     return AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
 }

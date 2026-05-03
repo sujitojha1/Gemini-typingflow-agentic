@@ -67,6 +67,13 @@ function preview(str, words = 8) {
     return ws.length <= words ? s : ws.slice(0, words).join(' ') + '…';
 }
 
+// Gemma models sometimes wrap JSON in prose — extract the first {...} block as fallback
+function extractJsonFromText(text) {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try { return JSON.parse(match[0]); } catch { return null; }
+}
+
 // ── Agent Pipeline (Track 1 — fast gallery, no artificial delays) ────────────
 
 async function runAgentPipeline(tabId) {
@@ -168,9 +175,12 @@ There are ${imageIndex.length} images available by index.
 ## YOUR GOAL
 Process every chunk through a quality pipeline, then finish.
 
-## RESPONSE FORMAT
-Return JSON every turn:
-{ "thought": "<brief reasoning>", "tool": "<NAME>", "args": { ... }, "nextStep": "<what you will do next>" }
+## RESPONSE FORMAT — CRITICAL
+You MUST output ONLY a raw JSON object. No prose, no explanation, no markdown, no code fences.
+Your ENTIRE response must be parseable by JSON.parse(). Do NOT write anything before or after the JSON.
+
+Example of a valid response:
+{"thought":"Chunk 0 looks like article content, not an ad.","tool":"checkRelevance","args":{"chunkIdx":0,"text":"..."},"nextStep":"Step B: find matching image for chunk 0"}
 
 ## AVAILABLE TOOLS (call exactly ONE per turn)
 
@@ -292,7 +302,14 @@ async function callAgent(allMessages, geminiApiKey, modelId) {
     try {
         return JSON.parse(raw);
     } catch (parseErr) {
-        console.error(`[agent] callAgent ${modelId}: JSON.parse failed:`, parseErr.message, '| raw:', raw.slice(0, 300));
+        // Gemma models sometimes wrap JSON in prose — attempt extraction before failing
+        const extracted = extractJsonFromText(raw);
+        if (extracted) {
+            console.warn(`[agent] callAgent ${modelId}: prose-wrapped JSON extracted successfully`);
+            return extracted;
+        }
+        console.error(`[agent] callAgent ${modelId}: JSON.parse failed — no JSON found in response.`,
+            parseErr.message, '| raw:', raw.slice(0, 300));
         throw new Error(`Agent JSON parse failed: ${parseErr.message}`);
     }
 }
@@ -540,13 +557,13 @@ Return ONLY valid JSON:
 Rules: group related consecutive blocks; each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
 
     const triedIds = new Set();
-    const MAX_MODEL_RETRIES = 5;
+    const MAX_MODEL_RETRIES = CHUNKING_MODEL_POOL.length + 1;
 
     for (let attempt = 0; attempt < MAX_MODEL_RETRIES; attempt++) {
-        const candidates = AGENT_MODEL_POOL.filter(m => !triedIds.has(m.id));
+        const candidates = CHUNKING_MODEL_POOL.filter(m => !triedIds.has(m.id));
         const model = candidates.length
             ? candidates[Math.floor(Math.random() * candidates.length)]
-            : AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
+            : CHUNKING_MODEL_POOL[Math.floor(Math.random() * CHUNKING_MODEL_POOL.length)];
         triedIds.add(model.id);
 
         const promptChars = prompt.length;
