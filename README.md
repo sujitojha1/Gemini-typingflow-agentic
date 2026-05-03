@@ -12,10 +12,10 @@ Popup opens
 
 User clicks "Process Page Intelligence"
   → content.js extracts text blocks + image URLs from the page
-  → Gemini Flash Lite called immediately → nuggets mounted → gallery opens → popup closes
-  → Gemma 4 runs in background service worker simultaneously
+  → Track 1 (Normal Process): Gemini Flash Lite called immediately to generate chunks → gallery opens → popup closes
+  → Track 2 (Agentic Process): Gemma 4 agent triggers asynchronously in background
       → fetches page images as base64, sends multimodal request to Google AI
-      → on completion → pushes refined nuggets directly to the tab
+      → on completion → extension switches to the later chunks
       → toast: "✦ Gemma 4 refined your nuggets" → gallery updates in place
 
 User clicks any nugget card
@@ -29,15 +29,17 @@ Session complete → one-click Markdown export
 
 ## Features
 
-### Dual-Model Nugget Pipeline
-Two models run in parallel on every extraction:
+### Two-Track Processing Pipeline
+TypingFlow utilizes a dual-track architecture triggered simultaneously when you click "Process Page Intelligence":
 
-| Model | Role | Timing |
-|---|---|---|
-| `gemini-3.1-flash-lite-preview` | Fast initial chunking — mounts gallery immediately | Blocks until done (~2s) |
-| `gemma-4-31b-it` | Multimodal re-chunking with visual image mapping | Background, non-blocking |
+1. **Track 1: Normal Process (`gemini-3.1-flash-lite-preview`)**
+   - Fast initial chunking that structures the page intelligence and generates the first set of chunks.
+   - Blocks the UI briefly (~2s) and mounts the gallery immediately for instant user interaction.
 
-Gemini gets the user into the gallery fast. Gemma 4 takes its time with the page images (fetched as base64 `inlineData`) to produce a visually-grounded, more accurate chunk-to-image mapping. When Gemma finishes, the gallery updates live with a toast notification. Both versions are preserved in session state (`sessionData.geminiNuggets` and `sessionData.nuggets`).
+2. **Track 2: Agentic Process (`gemma-4-31b-it`)**
+   - Triggers asynchronously in the background as soon as the extension button is clicked.
+   - Performs a deeper, multimodal agentic refinement (fetching page images as base64 `inlineData`) to produce a visually-grounded, more accurate chunk-to-image mapping.
+   - Once the agent processing is done, the extension seamlessly **switches to the later chunks**, updating the gallery live with a toast notification. Both versions are preserved in session state.
 
 ### Agentic Page Intelligence
 The popup runs a lightweight DOM scan the instant it opens — before any API call — and surfaces two real-time chips:

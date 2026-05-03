@@ -1,16 +1,20 @@
-# Agent Instructions
+# Agent Instructions (Parallel Agentic Track)
 
-**Step 1: Create an agent session**
-- Create a Session ID based on timestamp and create temporary folder.
+This document outlines the instructions for the parallel, agent-driven background process (Track 2). The agent must execute the following steps by calling the appropriate functions from the `tools/` directory:
+
+**Step 1: Create an Agent Session**
+- **Tool:** Call `createSession()` from `tools/session.js`.
+- **Purpose:** Generate a unique timestamp-based `sessionId` and securely set up a temporary workspace folder (`tempFolderPath`) to isolate this processing run.
 
 **Step 2: Initial Content Storage**
-- Execute the content-saving tool to extract the provided data and save it securely into a temporary folder. This cached content will serve as the source material for later reference during processing.
+- **Tool:** Call `saveInitialContent(params)` from `tools/storage.js`.
+- **Parameters:** Pass the `tempFolderPath` (from Step 1) and the raw extracted `content`.
+- **Purpose:** Securely cache the extracted payload (text blocks and image URLs) into the temporary folder. This cached file serves as the raw material for the agent's deep processing.
 
-**Step 3: Structuring nuggets**
-- Send the extracted content to the LLM model pool (rotating through models upon failure) to logically structure the data into semantic fragments or "nuggets" and evaluate context.
+**Step 3: Multimodal Chunk Processing**
+- **Tool:** Call `processChunk(data)` from `tools/example.js` (acting as the Gemma processor).
+- **Prompt/Directive:** Pass the saved chunk data and instruct the agent to run a parallel background task using the `gemma-4-31b-it` model. The agent must deeply refine the structured nuggets by processing text and base64 images simultaneously for accurate visual mapping.
 
-**Step 4: Mounting gallery**
-- Forward the successfully structured JSON payload to the content interface, mounting the visual typing overlay and gallery for user interaction.
-
-**Step 5: Background Gemma Refinement**
-- If the primary model used was not Gemma 4, run a parallel background task using the Gemma 4 model to further refine the structured nuggets without blocking the user interface.
+**Step 4: State Handoff**
+- **Action:** Once tool execution is complete, dynamically push the refined chunks chronologically back to the active tab.
+- **Purpose:** Ensure the extension seamlessly switches to these later chunks without interrupting the user's active session.
