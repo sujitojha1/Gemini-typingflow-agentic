@@ -21,6 +21,20 @@ function pickAgentModel() {
     return AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
 }
 
+// Shared fetch with AbortController timeout — prevents silent hangs in service-worker context
+async function fetchWithTimeout(url, options, timeoutMs = 25000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+        console.error(`[typingflow] fetchWithTimeout: aborting after ${timeoutMs}ms — ${url.split('?')[0].split('/').pop()}`);
+        controller.abort();
+    }, timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // Shared base64 encoder — chunked to avoid call-stack overflow on large images
 function arrayBufferToBase64(buf) {
     const bytes = new Uint8Array(buf);
@@ -74,14 +88,15 @@ async function callGeminiWithModel(payload, modelId) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
     const fullPrompt = SYSTEM_PROMPT + "\n\nRAW SCRAPED CONTENT:\n" + JSON.stringify(payload);
     try {
-        const response = await fetch(url, {
+        console.log(`[typingflow] callGeminiWithModel: ${modelId} | prompt ~${fullPrompt.length} chars`);
+        const response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: fullPrompt }] }],
                 generationConfig: { response_mime_type: "application/json" }
             })
-        });
+        }, 30000);
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
             const msg = `${modelId} error (${response.status}): ${err.error?.message || response.statusText}`;
@@ -137,14 +152,15 @@ async function callGemmaAPI(payload) {
     }
 
     try {
-        const response = await fetch(url, {
+        console.log(`[typingflow] callGemmaAPI: ${GEMMA_MODEL} | ${textItems.length} text items | ${parts.length - 1} images attached`);
+        const response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts }],
                 generationConfig: { response_mime_type: "application/json" }
             })
-        });
+        }, 35000);
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));

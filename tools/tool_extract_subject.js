@@ -11,14 +11,14 @@ CHUNK:
 ${text.slice(0, 600)}`;
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { response_mime_type: 'application/json' }
             })
-        });
+        }, 20000);
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
             const errDetail = errBody.error?.message || res.statusText;
@@ -38,7 +38,8 @@ ${text.slice(0, 600)}`;
             return { subject: 'Untitled' };
         }
     } catch (e) {
-        console.error(`[agent] toolExtractSubject ${model.label} threw:`, e.message);
+        const isTimeout = e.name === 'AbortError';
+        console.error(`[agent] toolExtractSubject ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
         return { subject: 'Untitled' };
     }
 }

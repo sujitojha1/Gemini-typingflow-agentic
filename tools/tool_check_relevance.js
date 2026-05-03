@@ -15,14 +15,14 @@ ${text}
 Schema: {"isAd":<boolean>,"reason":"<one short sentence explaining why>"}`;
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { response_mime_type: 'application/json' }
             })
-        });
+        }, 20000);
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
             const errDetail = errBody.error?.message || res.statusText;
@@ -42,7 +42,8 @@ Schema: {"isAd":<boolean>,"reason":"<one short sentence explaining why>"}`;
             return { isAd: false, reason: `Parse failed: ${parseErr.message}`, error: true };
         }
     } catch (e) {
-        console.error(`[agent] toolCheckRelevance ${model.label} threw:`, e.message);
-        return { isAd: false, reason: e.message, error: true };
+        const isTimeout = e.name === 'AbortError';
+        console.error(`[agent] toolCheckRelevance ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
+        return { isAd: false, reason: isTimeout ? 'timed out after 20s' : e.message, error: true };
     }
 }

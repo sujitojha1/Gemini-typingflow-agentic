@@ -15,14 +15,14 @@ ${text}
 Schema: {"isProper":<boolean>,"issues":"<one sentence summarizing the grammar/spelling issues, or 'None' if proper>"}`;
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { response_mime_type: 'application/json' }
             })
-        });
+        }, 20000);
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
             const errDetail = errBody.error?.message || res.statusText;
@@ -42,7 +42,8 @@ Schema: {"isProper":<boolean>,"issues":"<one sentence summarizing the grammar/sp
             return { isProper: true, issues: `Parse failed: ${parseErr.message}`, error: true };
         }
     } catch (e) {
-        console.error(`[agent] toolCheckGrammar ${model.label} threw:`, e.message);
-        return { isProper: true, issues: e.message, error: true };
+        const isTimeout = e.name === 'AbortError';
+        console.error(`[agent] toolCheckGrammar ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
+        return { isProper: true, issues: isTimeout ? 'timed out after 20s' : e.message, error: true };
     }
 }

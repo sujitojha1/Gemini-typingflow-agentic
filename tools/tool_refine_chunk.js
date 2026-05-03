@@ -21,14 +21,14 @@ Evaluation Feedback (for context):
 Schema: {"refinedText":"<the improved content, preserving author voice, max 300 words>"}`;
 
     try {
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { response_mime_type: 'application/json' }
             })
-        });
+        }, 20000);
         if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
             const errDetail = errBody.error?.message || res.statusText;
@@ -52,7 +52,8 @@ Schema: {"refinedText":"<the improved content, preserving author voice, max 300 
             return { refinedText: text, error: `Parse failed: ${parseErr.message}` };
         }
     } catch (e) {
-        console.error(`[agent] toolRefineChunk ${model.label} threw:`, e.message);
-        return { refinedText: text, error: e.message };
+        const isTimeout = e.name === 'AbortError';
+        console.error(`[agent] toolRefineChunk ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
+        return { refinedText: text, error: isTimeout ? 'timed out after 20s' : e.message };
     }
 }

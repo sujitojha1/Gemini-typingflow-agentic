@@ -269,14 +269,14 @@ async function callAgent(allMessages, geminiApiKey, modelId) {
         parts: [{ text: m.text }],
     }));
 
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             contents,
             generationConfig: { response_mime_type: 'application/json' },
         }),
-    });
+    }, 25000);
     if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         const errDetail = errBody.error?.message || res.statusText;
@@ -334,12 +334,15 @@ async function runAgenticLoop(tabId, payload) {
         [`tf_pt_${sessionId}_texts`]: textBlocks,
         tf_pt_coverage: [],
     });
+    console.log(`[agent] runAgenticLoop: ${textBlocks.length} textBlocks, ${imageIndex.length} images indexed`);
     agentBroadcast(tabId, '[Agent] Indexed', initModel.label,
         `${textBlocks.length} text | ${imageIndex.length} img`);
 
     // Phase 2: Chunk identification
     const chunkStart = Date.now();
-    agentBroadcast(tabId, '[Agent] Chunking', initModel.label);
+    agentBroadcast(tabId, '[Agent] Chunking', initModel.label,
+        `${textBlocks.length} text blocks → semantic grouping`);
+    console.log(`[agent] identifySemanticChunks: starting with ${textBlocks.length} blocks, model pool:`, AGENT_MODEL_POOL.map(m => m.label));
     let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey, tabId);
     if (!chunks?.length) {
         agentBroadcast(tabId, '[Agent] Chunking fallback', null,
@@ -372,9 +375,11 @@ async function runAgenticLoop(tabId, payload) {
                     break;
                 } catch (e) {
                     modelAttempt++;
-                    console.warn(`[agent] ${turnModel.label} failed (attempt ${modelAttempt}):`, e.message);
-                    agentBroadcast(tabId, '[Agent] Model failed', turnModel.label,
-                        `attempt ${modelAttempt}/${MAX_MODEL_RETRIES} — ${e.message}`);
+                    const isTimeout = e.name === 'AbortError';
+                    const errLabel = isTimeout ? 'TIMEOUT (25s)' : e.message;
+                    console.warn(`[agent] ${turnModel.label} ${isTimeout ? 'timed out' : 'failed'} (attempt ${modelAttempt}):`, errLabel);
+                    agentBroadcast(tabId, isTimeout ? '[Agent] Model timeout' : '[Agent] Model failed',
+                        turnModel.label, `attempt ${modelAttempt}/${MAX_MODEL_RETRIES} — ${errLabel}`);
                     if (modelAttempt >= MAX_MODEL_RETRIES) {
                         agentBroadcast(tabId, '[Agent] All retries exhausted', turnModel.label,
                             `${MAX_MODEL_RETRIES} models tried, aborting loop`);
@@ -544,19 +549,21 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
             : AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
         triedIds.add(model.id);
 
+        const promptChars = prompt.length;
+        console.log(`[agent] chunking attempt ${attempt + 1}/${MAX_MODEL_RETRIES}: ${model.label} | ${textBlocks.length} blocks | prompt ${promptChars} chars`);
         agentBroadcast(tabId, '[Agent] Chunking model', model.label,
-            `attempt ${attempt + 1}/${MAX_MODEL_RETRIES}`);
+            `attempt ${attempt + 1}/${MAX_MODEL_RETRIES} | ${textBlocks.length} blocks | ~${promptChars} chars`);
 
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
         try {
-            const res = await fetch(url, {
+            const res = await fetchWithTimeout(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: prompt }] }],
                     generationConfig: { response_mime_type: 'application/json' },
                 }),
-            });
+            }, 30000);
             if (!res.ok) {
                 const errBody = await res.json().catch(() => ({}));
                 const errDetail = errBody.error?.message || res.statusText;
@@ -590,9 +597,11 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
             }
             return chunks;
         } catch (e) {
-            console.warn(`[agent] chunking ${model.label} threw:`, e.message);
-            agentBroadcast(tabId, '[Agent] Chunking error', model.label,
-                `${e.message} — rotating model`);
+            const isTimeout = e.name === 'AbortError';
+            const msg = isTimeout ? 'timed out after 30s' : e.message;
+            console.error(`[agent] chunking ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, msg);
+            agentBroadcast(tabId, isTimeout ? '[Agent] Chunking timeout' : '[Agent] Chunking error',
+                model.label, `${msg} — rotating model`);
         }
     }
 
