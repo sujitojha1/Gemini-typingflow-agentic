@@ -215,17 +215,21 @@ const INJECT_CSS = `
   .tf-typing-panel { flex: 1; position: relative; }
 
   .tf-progress-bar {
-    display: flex; align-items: center; gap: 14px; margin-bottom: 24px;
+    display: flex; align-items: flex-start; gap: 14px; margin-bottom: 24px;
   }
-  .tf-pips { display: flex; gap: 5px; align-items: center; }
+  .tf-pips {
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start;
+    max-width: calc(100% - 80px);
+  }
   .tf-pip {
-    width: 28px; height: 3px; border-radius: 2px; background: #2a2a2a;
-    transition: background 0.3s ease;
+    width: 14px; height: 14px; border-radius: 3px; background: #2a2a2a;
+    flex-shrink: 0; transition: background 0.3s ease;
   }
   .tf-pip.done { background: #27c93f; }
   .tf-pip.active { background: #4a8cd4; box-shadow: 0 0 6px rgba(74, 140, 212, 0.5); }
   .tf-progress-label {
     color: #555; font-size: 12px; font-family: 'Menlo', monospace; letter-spacing: 0.3px;
+    white-space: nowrap; padding-top: 1px;
   }
   .tf-progress-label strong { color: #ECEBDE; font-weight: 600; }
   
