@@ -16,6 +16,9 @@
 
 For each semantic chunk, an independent agent loop runs the following steps sequentially and records every call in a `history` array:
 
+### Step 0 — Content Filtering
+- **checkRelevance**: analyze the chunk to determine if it is an advertisement, sponsored content, or irrelevant boilerplate. If it is, the chunk is dropped and the loop terminates early.
+
 ### Step 1 — Image Resolution
 - **findMatchingImage**: check if the chunk's `nearbyImageIdx` points to a valid image in the index; if yes, use that image URL directly
 - **generateChunkImage** (if no match): build a semantic prompt from the chunk text and tags, then call the Gemini Image API to generate a contextually aligned visual
