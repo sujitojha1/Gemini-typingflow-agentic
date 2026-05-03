@@ -22,7 +22,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case 'RUN_AGENT':
-      runAgentLoop(msg.text, msg.prompt, sender.tab.id);
+      runAgentLoop(msg.text, msg.prompt, sender.tab?.id);
       break;
   }
 });

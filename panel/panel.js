@@ -147,6 +147,7 @@ function runAgent() {
   chrome.tabs.query({active: true, currentWindow: true}, tabs => {
     if (tabs[0]) {
       chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FIELD_TEXT' }, resp => {
+        void chrome.runtime.lastError; // suppress "Receiving end does not exist" warning
         const text = resp && resp.text ? resp.text : '';
         chrome.runtime.sendMessage({ type: 'RUN_AGENT', text, prompt });
       });
@@ -162,8 +163,12 @@ function resetUI(full = true) {
   $('report-section').classList.add('hidden');
   $('pipeline').classList.add('hidden');
   $('spinner').classList.add('hidden');
-  $('run-btn').disabled    = false;
-  $('run-btn').textContent = 'Process Page Intelligence';
+  $('run-btn').disabled        = false;
+  $('run-btn').textContent     = 'Process Page Intelligence';
+  $('typing-btn').disabled     = false;
+  $('typing-btn').textContent  = 'Launch Typing Session';
+  typingChunks   = [];
+  sessionImage   = '';
   analyzeCardNode = null;
   analyzeCount = 0;
   chunkCardNode = null;
@@ -433,9 +438,12 @@ function onDone(text) {
   $('run-btn').disabled    = false;
   $('run-btn').textContent = 'Process Page Intelligence';
   PIPE_ORDER.forEach(s => setPipelineStep(s, 'done'));
-  
+
   if (typingChunks.length > 0) {
-    openTypingSession();
+    const btn = $('typing-btn');
+    btn.disabled    = false;
+    btn.textContent = '▶ Start Typing Session';
+    btn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } else {
     $('report-body').innerHTML = renderMarkdown(text || '(No report returned.)');
     $('report-section').classList.remove('hidden');
@@ -460,10 +468,23 @@ function openTypingSession() {
   if (typingChunks.length > 0) {
     chrome.storage.local.set({ typingChunks, sessionImage }, () => {
       chrome.tabs.query({active: true, currentWindow: true}, tabs => {
-        if (tabs[0]) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'OPEN_TYPING_IFRAME' });
-          window.close(); // Close popup
-        }
+        if (!tabs[0]) return;
+        const tabId = tabs[0].id;
+        chrome.tabs.sendMessage(tabId, { type: 'OPEN_TYPING_IFRAME' }, () => {
+          if (chrome.runtime.lastError) {
+            // Content script not loaded yet — inject it first, then retry
+            chrome.scripting.executeScript(
+              { target: { tabId }, files: ['content.js'] },
+              () => {
+                if (chrome.runtime.lastError) { window.close(); return; }
+                chrome.tabs.sendMessage(tabId, { type: 'OPEN_TYPING_IFRAME' });
+                window.close();
+              }
+            );
+            return;
+          }
+          window.close();
+        });
       });
     });
     return;
