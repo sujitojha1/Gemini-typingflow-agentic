@@ -5,7 +5,7 @@ async function toolRefineChunk({ text, evaluation }) {
     const modelId = 'gemini-3.1-flash-lite-preview';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
-    const prompt = `Refine the following learning content chunk based on the evaluation feedback. Preserve the author's voice and all original facts. Make it clearer and more complete. Return ONLY valid JSON.
+    const prompt = `Refine the following learning content chunk based on the evaluation feedback. Preserve the author's voice and all original facts. Make it clearer and more complete. Keep the refined text under 300 words. Return ONLY valid JSON.
 
 Original content:
 ${text}
@@ -15,7 +15,7 @@ Evaluation:
 - Critique: ${evaluation.critique || 'N/A'}
 - Suggestion: ${evaluation.suggestions || 'N/A'}
 
-Schema: {"refinedText":"<the improved content, preserving author voice>"}`;
+Schema: {"refinedText":"<the improved content, preserving author voice, max 300 words>"}`;
 
     try {
         const res = await fetch(url, {
@@ -31,7 +31,10 @@ Schema: {"refinedText":"<the improved content, preserving author voice>"}`;
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!jsonText) return { refinedText: text, error: 'Empty response' };
         const parsed = JSON.parse(jsonText);
-        return { refinedText: parsed.refinedText || text };
+        let refined = parsed.refinedText || text;
+        const words = refined.split(/\s+/);
+        if (words.length > 300) refined = words.slice(0, 300).join(' ') + '…';
+        return { refinedText: refined };
     } catch (e) {
         return { refinedText: text, error: e.message };
     }

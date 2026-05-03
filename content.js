@@ -149,12 +149,15 @@ const INJECT_CSS = `
   .tf-close-box:hover { color: #fff; background: rgba(255,255,255,0.1); }
   
   .tf-stats-bar {
-    display: flex; align-items: center; max-width: 1100px; width: 100%; margin: 40px auto 20px;
+    display: flex; align-items: center; justify-content: space-between; max-width: 1100px; width: 100%; margin: 40px auto 20px;
     font-size: 12px; color: #888; font-family: 'Menlo', monospace; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 20px;
   }
   .tf-nav-btns { display: flex; gap: 20px; }
   .tf-nav-btn { background: none; border: none; color: #4a8cd4; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; padding: 0; outline: none; margin: 0; }
   .tf-nav-btn.disabled { color: #444; cursor: not-allowed; }
+  .tf-chunk-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .tf-chunk-subject { color: #ECEBDE; font-size: 13px; font-weight: 600; letter-spacing: 0.1px; }
+  .tf-chunk-metrics { font-size: 10px; color: #444; letter-spacing: 0.3px; }
 
   .tf-bottom-bar {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
@@ -232,9 +235,13 @@ const INJECT_CSS = `
   }
   .tf-ncard:hover { background: rgba(255,255,255,0.05); border-left-color: #4a8cd4; }
   .tf-ncard-label {
-    padding: 10px 20px; font-size: 12px; color: #666; border-bottom: 1px solid rgba(255,255,255,0.04);
-    display: flex; justify-content: space-between; align-items: center; font-family: 'Menlo', monospace;
+    padding: 8px 20px 4px; font-size: 12px; color: #666; border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-family: 'Menlo', monospace;
   }
+  .tf-ncard-label-row { display: flex; justify-content: space-between; align-items: center; }
+  .tf-ncard-subject { color: #ECEBDE; font-size: 12px; font-weight: 600; margin-top: 2px; letter-spacing: 0.1px; }
+  .tf-ncard-metrics { display: flex; gap: 12px; margin-top: 4px; padding-bottom: 4px; font-size: 10px; color: #444; }
+  .tf-ncard-metric-score { color: #E1C04C; }
   .tf-ncard-hint { color: #4a8cd4; font-size: 11px; }
   .tf-ncard-body { display: flex; gap: 20px; padding: 16px 20px; align-items: flex-start; }
   .tf-ncard-img { flex: 0 0 130px; height: 80px; background: #111; border-radius: 4px; overflow: hidden; }
@@ -347,11 +354,43 @@ function renderNuggetGallery() {
 
         const label = document.createElement('div');
         label.className = 'tf-ncard-label';
-        label.appendChild(document.createTextNode(`[${String(i + 1).padStart(2, '0')}] —`));
+
+        const labelRow = document.createElement('div');
+        labelRow.className = 'tf-ncard-label-row';
+        const labelIdx = document.createTextNode(`[${String(i + 1).padStart(2, '0')}] —`);
         const hint = document.createElement('span');
         hint.className = 'tf-ncard-hint';
         hint.textContent = 'click to type ›';
-        label.appendChild(hint);
+        labelRow.appendChild(labelIdx);
+        labelRow.appendChild(hint);
+        label.appendChild(labelRow);
+
+        if (nugget.subject) {
+            const subjectEl = document.createElement('div');
+            subjectEl.className = 'tf-ncard-subject';
+            subjectEl.textContent = nugget.subject;
+            label.appendChild(subjectEl);
+        }
+
+        const metricsEl = document.createElement('div');
+        metricsEl.className = 'tf-ncard-metrics';
+        if (nugget.score != null) {
+            const scoreEl = document.createElement('span');
+            scoreEl.className = 'tf-ncard-metric-score';
+            scoreEl.textContent = `score ${nugget.score}/5`;
+            metricsEl.appendChild(scoreEl);
+        }
+        if (nugget.stats?.wordCount) {
+            const wEl = document.createElement('span');
+            wEl.textContent = `${nugget.stats.wordCount} words`;
+            metricsEl.appendChild(wEl);
+        }
+        if (nugget.coverage != null) {
+            const cEl = document.createElement('span');
+            cEl.textContent = `cov ${nugget.coverage}%`;
+            metricsEl.appendChild(cEl);
+        }
+        if (metricsEl.children.length) label.appendChild(metricsEl);
 
         const body = document.createElement('div');
         body.className = 'tf-ncard-body';
@@ -430,6 +469,7 @@ function renderCurrentNugget() {
                 <button class="tf-nav-btn ${isFirst ? 'disabled' : ''}" id="tf-prev-btn">&larr; prev</button>
                 <button class="tf-nav-btn" id="tf-next-btn">next &rarr;</button>
             </div>
+            <div class="tf-chunk-meta" id="tf-chunk-meta"></div>
         </div>
 
         <div class="tf-main-container" style="padding-bottom: 100px;">
@@ -506,6 +546,27 @@ function renderCurrentNugget() {
 
     document.getElementById('tf-close-btn').addEventListener('click', closeOverlay);
     document.getElementById('tf-all-btn').addEventListener('click', renderNuggetGallery);
+
+    const chunkMetaEl = document.getElementById('tf-chunk-meta');
+    if (chunkMetaEl) {
+        if (nugget.subject) {
+            const sEl = document.createElement('div');
+            sEl.className = 'tf-chunk-subject';
+            sEl.textContent = nugget.subject;
+            chunkMetaEl.appendChild(sEl);
+        }
+        const metaParts = [];
+        if (nugget.score != null) metaParts.push(`score ${nugget.score}/5`);
+        if (nugget.stats?.wordCount) metaParts.push(`${nugget.stats.wordCount} words`);
+        if (nugget.coverage != null) metaParts.push(`cov ${nugget.coverage}%`);
+        if (metaParts.length) {
+            const mEl = document.createElement('div');
+            mEl.className = 'tf-chunk-metrics';
+            mEl.textContent = metaParts.join(' · ');
+            chunkMetaEl.appendChild(mEl);
+        }
+    }
+
     document.getElementById('tf-next-btn').addEventListener('click', () => {
         currentNuggetIndex++;
         renderCurrentNugget();

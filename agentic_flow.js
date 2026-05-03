@@ -215,11 +215,16 @@ async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex
     const stats = toolGetChunkStats({ text: chunk.text });
     history.push({ tool: 'getChunkStats', input: { chunkIdx }, result: stats });
 
-    // Step 3: Evaluate
+    // Step 3: Subject
+    const subjectResult = await toolExtractSubject({ text: chunk.text });
+    const subject = subjectResult.subject || 'Untitled';
+    history.push({ tool: 'extractSubject', input: { chunkIdx }, result: subjectResult });
+
+    // Step 4: Evaluate
     const evaluation = await toolEvaluateChunk({ text: chunk.text });
     history.push({ tool: 'evaluateChunk', input: { chunkIdx }, result: evaluation });
 
-    // Step 4: Refine — only when score is below threshold; skip if evaluation errored
+    // Step 5: Refine — only when score is below threshold; skip if evaluation errored
     let refinedText = chunk.text;
     if (!evaluation.error && evaluation.score < 4) {
         const refined = await toolRefineChunk({ text: chunk.text, evaluation });
@@ -233,7 +238,7 @@ async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex
         });
     }
 
-    // Step 5: Coverage
+    // Step 6: Coverage
     const coverage = await toolUpdateCoverage({ chunkIdx, totalChunks });
     history.push({ tool: 'updateCoverage', input: { chunkIdx, totalChunks }, result: coverage });
 
@@ -244,7 +249,7 @@ async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex
         `score:${evaluation.score ?? '?'} cov:${coverage.coverage}%`
     );
 
-    return { chunkIdx, text: chunk.text, refinedText, imgSrc, tags: chunk.tags, stats, evaluation, coverage: coverage.coverage, history };
+    return { chunkIdx, text: chunk.text, refinedText, imgSrc, tags: chunk.tags, subject, stats, evaluation, coverage: coverage.coverage, history };
 }
 
 async function runAgenticParallelTrack(tabId, payload) {
@@ -298,7 +303,9 @@ async function runAgenticParallelTrack(tabId, payload) {
             text: r.refinedText,
             img_src: r.imgSrc,
             tags: r.tags,
+            subject: r.subject,
             stats: r.stats,
+            score: r.evaluation?.score ?? null,
             coverage: r.coverage,
         })),
         sessionId,
