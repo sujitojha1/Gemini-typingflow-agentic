@@ -59,8 +59,14 @@ async function runAgentPipeline(tabId) {
         return;
     }
 
-    // TASK: extract
-    agentBroadcast(tabId, 'extracting page content', '—');
+    // Step 1: Create an agent session
+    agentBroadcast(tabId, 'Step 1: Create an agent session', '—');
+    const sessionId = 'session_' + Date.now();
+    // Simulate thinking/creating
+    await new Promise(r => setTimeout(r, 600));
+
+    // Step 2: Initial Content Storage
+    agentBroadcast(tabId, 'Step 2: Initial Content Storage', '—');
     let payload;
     try {
         payload = await extractFromTab(tabId);
@@ -73,13 +79,14 @@ async function runAgentPipeline(tabId) {
         return;
     }
 
-    await chrome.storage.local.set({ tf_agent_payload: payload, tf_agent_tab: tabId });
+    await chrome.storage.local.set({ [`tf_agent_payload_${sessionId}`]: payload, tf_agent_tab: tabId });
+    await new Promise(r => setTimeout(r, 600));
 
     // TASK: structure with model rotation
     let structureResult = null;
     let usedModel = null;
     for (const model of MODEL_POOL) {
-        agentBroadcast(tabId, 'structuring nuggets', model.label);
+        agentBroadcast(tabId, 'Step 3: Structuring nuggets', model.label);
         try {
             const result = await callModelForStructuring(payload, model);
             if (result.success) { structureResult = result; usedModel = model; break; }
@@ -94,7 +101,7 @@ async function runAgentPipeline(tabId) {
     }
 
     // TASK: mount gallery
-    agentBroadcast(tabId, 'mounting gallery', usedModel.label);
+    agentBroadcast(tabId, 'Step 4: Mounting gallery', usedModel.label);
     await tabMessage(tabId, { action: 'mount_ui', data: structureResult.api_response })
         .catch(() => {});
     chrome.tabs.sendMessage(tabId, { action: 'open_overlay' }, () => { chrome.runtime.lastError; });
@@ -113,7 +120,7 @@ async function runAgentPipeline(tabId) {
         }
     });
 
-    agentBroadcast(tabId, 'complete', usedModel.label,
+    agentBroadcast(tabId, 'complete (Steps 1-4 Done)', usedModel.label,
         `${structureResult.api_response.nuggets?.length} nuggets`);
 
     // TASK: background Gemma refinement (always, regardless of which model mounted)

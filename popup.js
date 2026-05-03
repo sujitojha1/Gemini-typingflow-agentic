@@ -1,7 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
     const btnExtract = document.getElementById('btn-extract');
     const btnType = document.getElementById('btn-type');
-    const loader = document.getElementById('loader');
+    const agentBar = document.getElementById('popup-agent-bar');
+    const agentTask = document.getElementById('popup-agent-task');
+    const agentModel = document.getElementById('popup-agent-model');
     const btnSettings = document.getElementById('btn-settings');
     const btnRefresh = document.getElementById('btn-refresh');
     const statWords = document.getElementById('stat-words');
@@ -19,20 +21,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    function updateLoader(msg) {
-        loader.style.display = 'block';
-        loader.innerText = `${msg}...`;
+    function updateAgentBar(task, model, detail) {
+        agentBar.classList.remove('tf-agent-error', 'tf-agent-done');
+        
+        if (task === 'error') {
+            agentBar.classList.add('tf-agent-error');
+            agentTask.textContent = `Error: ${detail || task}`;
+            agentModel.textContent = '';
+        } else if (task === 'complete') {
+            agentBar.classList.add('tf-agent-done');
+            agentTask.textContent = `agent · complete`;
+            agentModel.textContent = model && model !== 'null' ? `· ${model}` : '';
+        } else {
+            agentBar.classList.add('tf-agent-active');
+            agentTask.textContent = `agent · ${task}`;
+            agentModel.textContent = model && model !== 'null' ? `· ${model}` : '';
+        }
     }
-    function hideLoader() { loader.style.display = 'none'; }
 
     // Listen for agent status pushed from background
     chrome.runtime.onMessage.addListener((msg) => {
         if (msg.action === 'agent_status') {
-            const label = msg.model && msg.model !== 'null' ? `${msg.task}  ·  ${msg.model}` : msg.task;
-            updateLoader(label);
+            updateAgentBar(msg.task, msg.model, msg.detail);
             if (msg.task === 'error') {
                 btnExtract.disabled = false;
-                updateLoader(`Error: ${msg.detail || msg.task}`);
             }
         }
         if (msg.action === 'agent_close_popup') {
@@ -77,11 +89,11 @@ document.addEventListener('DOMContentLoaded', () => {
     btnExtract.addEventListener('click', () => {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs || tabs.length === 0) {
-                updateLoader('Error: No active tab found');
+                updateAgentBar('error', null, 'No active tab found');
                 return;
             }
             btnExtract.disabled = true;
-            updateLoader('Starting agent');
+            updateAgentBar('Starting agent', null);
             chrome.runtime.sendMessage({ action: 'agent_start', tabId: tabs[0].id });
         });
     });
