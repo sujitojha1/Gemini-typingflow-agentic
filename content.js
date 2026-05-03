@@ -266,6 +266,15 @@ const INJECT_CSS = `
   .tf-coverage { font-size: 12px; color: #555; font-family: 'Menlo', monospace; }
   .tf-coverage-bar { display: inline-block; width: 80px; height: 4px; background: #222; border-radius: 2px; vertical-align: middle; margin: 0 6px; position: relative; overflow: hidden; }
   .tf-coverage-fill { position: absolute; left: 0; top: 0; height: 100%; background: #27c93f; border-radius: 2px; }
+
+  .tf-log-btn { background: rgba(74, 140, 212, 0.1); border: 1px solid rgba(74, 140, 212, 0.4); color: #4a8cd4; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-family: 'Menlo', monospace; margin-left: 15px; }
+  .tf-log-btn:hover { background: rgba(74, 140, 212, 0.2); }
+  .tf-log-modal { position: absolute; inset: 60px 40px; background: #111; border: 1px solid #333; z-index: 100; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.8); animation: fade-in 0.2s; }
+  .tf-log-modal-hdr { padding: 15px 20px; background: #1a1a1a; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
+  .tf-log-title { color: #ECEBDE; font-size: 13px; font-weight: bold; }
+  .tf-log-close { cursor: pointer; color: #888; font-size: 18px; line-height: 1; }
+  .tf-log-close:hover { color: #fff; }
+  .tf-log-body { padding: 20px; overflow-y: auto; flex: 1; color: #aaa; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; font-family: 'Menlo', monospace; }
 `;
 
 function agentBarHTML() {
@@ -299,12 +308,17 @@ function mountUI(data) {
 }
 
 function renderNuggetGallery() {
+    const logBtnHtml = sessionData.processHistory ? `<button class="tf-log-btn" id="tf-log-btn">view agent logs</button>` : '';
+
     overlayWrapper.innerHTML = `
         ${agentBarHTML()}
         ${topbarHTML('~/typingflow')}
         <div class="tf-gallery-scroll">
             <div class="tf-gallery-hdr">
-                <div class="tf-gallery-cmd">$ extract --page-nuggets</div>
+                <div style="display: flex; align-items: baseline;">
+                    <div class="tf-gallery-cmd">$ extract --page-nuggets</div>
+                    ${logBtnHtml}
+                </div>
                 <div class="tf-gallery-sub" id="tf-gallery-sub"></div>
             </div>
             <div class="tf-nugget-cards" id="tf-ncard-list"></div>
@@ -312,6 +326,8 @@ function renderNuggetGallery() {
     `;
 
     document.getElementById('tf-close-btn').addEventListener('click', closeOverlay);
+    const logBtn = document.getElementById('tf-log-btn');
+    if (logBtn) logBtn.addEventListener('click', showLogModal);
 
     const sub = document.getElementById('tf-gallery-sub');
     const refinedLabel = sessionData.isAgentRefined ? ' · ✦ refined by Agent' : (sessionData.isGemmaRefined ? ' · ✦ refined by Gemma 4' : '');
@@ -425,6 +441,41 @@ function renderNuggetGallery() {
 
         list.appendChild(card);
     });
+}
+
+function showLogModal() {
+    let modal = document.getElementById('tf-log-modal');
+    if (modal) { modal.remove(); return; } // toggle off
+    
+    modal = document.createElement('div');
+    modal.id = 'tf-log-modal';
+    modal.className = 'tf-log-modal';
+    
+    let logText = 'Agentic Process History:\\n========================\\n\\n';
+    if (!sessionData.processHistory) {
+        logText += 'No logs available.';
+    } else {
+        sessionData.processHistory.forEach(chunk => {
+            logText += `[ Chunk ${chunk.chunkIdx + 1} ]\\n`;
+            chunk.steps.forEach(step => {
+                logText += `  > Tool: ${step.tool}\\n`;
+                logText += `    Input:  ${JSON.stringify(step.input)}\\n`;
+                logText += `    Result: ${JSON.stringify(step.result)}\\n`;
+            });
+            logText += '\\n';
+        });
+    }
+
+    modal.innerHTML = `
+        <div class="tf-log-modal-hdr">
+            <div class="tf-log-title">Agent Tool Logs</div>
+            <div class="tf-log-close" id="tf-log-close">&times;</div>
+        </div>
+        <div class="tf-log-body">${logText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+    `;
+    
+    overlayWrapper.appendChild(modal);
+    document.getElementById('tf-log-close').addEventListener('click', () => modal.remove());
 }
 
 function openOverlay() {
@@ -731,6 +782,7 @@ if (!window.geminiTfEventListening) {
                 if (request.data.tags) sessionData.tags = request.data.tags;
                 if (request.data.star_rating) sessionData.star_rating = request.data.star_rating;
                 if (request.data.coverage_pct != null) sessionData.coverage_pct = request.data.coverage_pct;
+                if (request.data.processHistory) sessionData.processHistory = request.data.processHistory;
                 sessionData.isAgentRefined = true;
 
                 // Show toast regardless of which view is active

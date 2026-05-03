@@ -39,7 +39,7 @@ TypingFlow utilizes a dual-track architecture triggered simultaneously when you 
 2. **Track 2: Agentic Process (Parallel Async Loop)**
    - Triggers asynchronously in the background.
    - Executes a 4-phase agentic workflow: Session & Content Indexing, Semantic Chunk Identification, Parallel Agent Loops (invoking tools like `checkRelevance`, `checkGrammar`, `evaluateChunk`, `refineChunk`), and State Handoff.
-   - Once the agent processing is done, the extension seamlessly **switches to the later chunks**, updating the gallery live with a toast notification. Both versions are preserved in session state.
+   - Once the agent processing is done, the extension seamlessly **switches to the later chunks**, updating the gallery live with a toast notification. Both versions are preserved in session state. Users can click the "view agent logs" button to inspect the detailed tool call history for each chunk.
 
 ### Agentic Page Intelligence
 The popup runs a lightweight DOM scan the instant it opens — before any API call — and surfaces two real-time chips:
