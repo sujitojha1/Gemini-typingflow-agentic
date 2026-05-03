@@ -205,6 +205,7 @@ importScripts(
     'tools/tool_get_chunk_stats.js',
     'tools/tool_extract_subject.js',
     'tools/tool_evaluate_chunk.js',
+    'tools/tool_check_grammar.js',
     'tools/tool_refine_chunk.js',
     'tools/tool_update_coverage.js',
     // Agent pipeline & orchestration

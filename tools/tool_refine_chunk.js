@@ -1,19 +1,22 @@
-async function toolRefineChunk({ text, evaluation }) {
+async function toolRefineChunk({ text, grammar, evaluation }) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return { refinedText: text, error: 'No API key' };
 
     const modelId = 'gemini-3.1-flash-lite-preview';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
-    const prompt = `Refine the following learning content chunk based on the evaluation feedback. Preserve the author's voice and all original facts. Make it clearer and more complete. Keep the refined text under 300 words. Return ONLY valid JSON.
+    const prompt = `Refine the following learning content chunk. Fix the grammar issues identified, and preserve the author's voice and all original facts. Keep the refined text STRICTLY UNDER 300 words. Return ONLY valid JSON.
 
 Original content:
 ${text}
 
-Evaluation:
-- Score: ${evaluation.score}/5
-- Critique: ${evaluation.critique || 'N/A'}
-- Suggestion: ${evaluation.suggestions || 'N/A'}
+Grammar Issues to Fix:
+${grammar ? grammar.issues : 'N/A'}
+
+Evaluation Feedback (for context):
+- Score: ${evaluation?.score || 'N/A'}/5
+- Critique: ${evaluation?.critique || 'N/A'}
+- Suggestion: ${evaluation?.suggestions || 'N/A'}
 
 Schema: {"refinedText":"<the improved content, preserving author voice, max 300 words>"}`;
 

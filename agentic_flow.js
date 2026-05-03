@@ -136,7 +136,7 @@ async function runAgentPipeline(tabId) {
 //   Phase 2 — LLM identifies semantic chunks from indexed text
 //   Phase 3 — each chunk runs its own async agent loop (parallel)
 //               checkRelevance → findMatchingImage | generateChunkImage
-//               getChunkStats → extractSubject → evaluateChunk → refineChunk → updateCoverage
+//               getChunkStats → extractSubject → evaluateChunk → checkGrammar → refineChunk → updateCoverage
 //   Phase 4 — state handoff: refined nuggets sent to tab overlay
 
 async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey) {
@@ -239,21 +239,25 @@ async function runChunkAgentLoop(tabId, chunk, chunkIdx, totalChunks, imageIndex
     const evaluation = await toolEvaluateChunk({ text: chunk.text });
     history.push({ tool: 'evaluateChunk', input: { chunkIdx }, result: evaluation });
 
-    // Step 5: Refine — only when score is below threshold; skip if evaluation errored
+    // Step 5: Check Grammar
+    const grammar = await toolCheckGrammar({ text: chunk.text });
+    history.push({ tool: 'checkGrammar', input: { chunkIdx }, result: grammar });
+
+    // Step 6: Refine — only if grammar is NOT proper; skip if grammar is proper or errored
     let refinedText = chunk.text;
-    if (!evaluation.error && evaluation.score < 4) {
-        const refined = await toolRefineChunk({ text: chunk.text, evaluation });
+    if (!grammar.error && !grammar.isProper) {
+        const refined = await toolRefineChunk({ text: chunk.text, grammar, evaluation });
         refinedText = refined.refinedText || chunk.text;
-        history.push({ tool: 'refineChunk', input: { chunkIdx, score: evaluation.score }, result: { refinedText } });
+        history.push({ tool: 'refineChunk', input: { chunkIdx, issues: grammar.issues }, result: { refinedText } });
     } else {
         history.push({
             tool: 'refineChunk',
             input: { chunkIdx },
-            result: { refinedText, skipped: true, reason: evaluation.error ? 'eval error' : 'score acceptable' },
+            result: { refinedText, skipped: true, reason: grammar.error ? 'grammar error' : 'grammar proper' },
         });
     }
 
-    // Step 6: Coverage
+    // Step 7: Coverage
     const coverage = await toolUpdateCoverage({ chunkIdx, totalChunks });
     history.push({ tool: 'updateCoverage', input: { chunkIdx, totalChunks }, result: coverage });
 

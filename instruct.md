@@ -29,11 +29,14 @@ For each semantic chunk, an independent agent loop runs the following steps sequ
 ### Step 3 — Content Evaluation
 - **evaluateChunk**: ask the LLM to score the chunk (1–5) on `clarity` and `completeness`, returning a one-sentence `critique` and `suggestions`
 
-### Step 4 — Content Refinement
-- **refineChunk**: if `score < 4`, ask the LLM to produce an improved version of the chunk using the critique and suggestion as guidance; preserve the author's voice and all original facts
-- Skip refinement if the score is acceptable (≥ 4) or if evaluation errored
+### Step 4 — Grammar Check
+- **checkGrammar**: evaluate the grammar, spelling, and phrasing of the chunk
 
-### Step 5 — Coverage Update
+### Step 5 — Content Refinement
+- **refineChunk**: if the grammar is not proper, ask the LLM to produce an improved version of the chunk fixing the grammar issues while using the evaluation critique as guidance; preserve the author's voice and all original facts. Output must be strictly under 300 words.
+- Skip refinement if the grammar is proper or if grammar checking errored
+
+### Step 6 — Coverage Update
 - **updateCoverage**: mark this chunk as complete in session storage, compute overall pipeline `coverage %` as `(processed / total) * 100`
 
 Each chunk's `history` array records `{ tool, input, result }` for every step above.
