@@ -3,9 +3,18 @@ const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
 const GEMMA_MODEL = "gemma-4-31b-it";
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "proxy_gemma_api") {
-        console.log("[typingflow] Routing to Gemma 4 API...");
-        callGemmaAPI(request.payload).then(sendResponse);
+    if (request.action === "proxy_gemma_background") {
+        // Fire-and-forget: Gemma runs after popup closes, pushes result directly to tab
+        const { payload, tabId } = request;
+        callGemmaAPI(payload).then(result => {
+            if (result.success) {
+                chrome.tabs.sendMessage(tabId, { action: "update_nuggets", data: result.api_response },
+                    () => { chrome.runtime.lastError; }); // suppress error if tab/overlay is gone
+            } else {
+                console.warn('[typingflow] Gemma background failed:', result.error);
+            }
+        });
+        sendResponse({ queued: true });
         return true;
     }
     if (request.action === "proxy_gemini_api") {

@@ -92,29 +92,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                // Agentic Tweak 2: Gemma 4 primary, Gemini Flash Lite fallback
-                updateLoader('Analysing with Gemma 4 (Google AI)');
-                chrome.runtime.sendMessage({ action: "proxy_gemma_api", payload: resp.payload }, (gemmaResp) => {
-                    if (!chrome.runtime.lastError && gemmaResp?.success) {
-                        console.log('[typingflow] Gemma 4 succeeded.');
-                        mountAndOpen(gemmaResp.api_response);
+                // Agentic Tweak 2: kick off Gemma in background service worker immediately
+                // (background.js owns the call and will push update_nuggets to the tab when done)
+                chrome.runtime.sendMessage({ action: "proxy_gemma_background", payload: resp.payload, tabId });
+
+                // Mount Gemini results immediately so user can start without waiting
+                updateLoader('Synthesizing with Gemini Flash Lite 3.1 Preview');
+                chrome.runtime.sendMessage({ action: "proxy_gemini_api", payload: resp.payload }, (apiResp) => {
+                    if (chrome.runtime.lastError) {
+                        updateLoader('Error: Background Service Worker offline');
+                        btnExtract.disabled = false;
                         return;
                     }
-                    console.warn('[typingflow] Gemma 4 failed, falling back to Gemini.', gemmaResp?.error);
-                    updateLoader('Synthesizing with Gemini Flash Lite 3.1 Preview');
-                    chrome.runtime.sendMessage({ action: "proxy_gemini_api", payload: resp.payload }, (apiResp) => {
-                        if (chrome.runtime.lastError) {
-                            updateLoader('Error: Background Service Worker offline');
-                            btnExtract.disabled = false;
-                            return;
-                        }
-                        if (apiResp.error) {
-                            updateLoader(`Error: ${apiResp.error}`);
-                            btnExtract.disabled = false;
-                            return;
-                        }
-                        mountAndOpen(apiResp.api_response);
-                    });
+                    if (apiResp.error) {
+                        updateLoader(`Error: ${apiResp.error}`);
+                        btnExtract.disabled = false;
+                        return;
+                    }
+                    mountAndOpen(apiResp.api_response);
                 });
             };
 

@@ -225,6 +225,18 @@ const INJECT_CSS = `
   .tf-ncard-img-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #2a2a2a; font-size: 24px; }
   .tf-ncard-text { flex: 1; font-size: 13px; color: #777; line-height: 1.65; }
 
+  @keyframes tf-toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes tf-toast-out { from { opacity: 1; } to { opacity: 0; } }
+  .tf-toast {
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%);
+    background: rgba(20, 20, 30, 0.95); border: 1px solid rgba(74, 140, 212, 0.4);
+    color: #4a8cd4; font-size: 12px; font-family: 'Menlo', monospace;
+    padding: 8px 18px; border-radius: 20px; z-index: 2147483647;
+    animation: tf-toast-in 0.3s ease-out forwards;
+    pointer-events: none; white-space: nowrap;
+  }
+  .tf-toast.out { animation: tf-toast-out 0.4s ease-in forwards; }
+
   .tf-gallery-meta { display: flex; align-items: center; gap: 20px; margin-top: 12px; }
   .tf-stars { color: #E1C04C; font-size: 16px; letter-spacing: 2px; }
   .tf-coverage { font-size: 12px; color: #555; font-family: 'Menlo', monospace; }
@@ -265,7 +277,8 @@ function renderNuggetGallery() {
     document.getElementById('tf-close-btn').addEventListener('click', closeOverlay);
 
     const sub = document.getElementById('tf-gallery-sub');
-    sub.textContent = `${sessionData.nuggets.length} fragments · click any to type`;
+    const refinedLabel = sessionData.isGemmaRefined ? ' · ✦ refined by Gemma 4' : '';
+    sub.textContent = `${sessionData.nuggets.length} fragments${refinedLabel} · click any to type`;
 
     // Star rating
     const rating = sessionData.star_rating;
@@ -625,6 +638,37 @@ if (!window.geminiTfEventListening) {
             sendResponse({ success: true });
         } else if (request.action === 'check_session') {
             sendResponse({ hasSession: !!sessionData });
+        } else if (request.action === 'update_nuggets') {
+            if (sessionData) {
+                sessionData.geminiNuggets = sessionData.geminiNuggets || sessionData.nuggets;
+                sessionData.nuggets = request.data.nuggets;
+                if (request.data.tldr) sessionData.tldr = request.data.tldr;
+                if (request.data.tags) sessionData.tags = request.data.tags;
+                if (request.data.star_rating) sessionData.star_rating = request.data.star_rating;
+                if (request.data.coverage_pct != null) sessionData.coverage_pct = request.data.coverage_pct;
+                sessionData.isGemmaRefined = true;
+
+                // Show toast regardless of which view is active
+                showGemmaToast();
+
+                // If gallery is open, re-render cards in place
+                if (overlayWrapper && document.getElementById('tf-ncard-list')) {
+                    renderNuggetGallery();
+                }
+            }
+            sendResponse({ success: true });
         }
     });
+}
+
+function showGemmaToast() {
+    if (!overlayWrapper) return;
+    const toast = document.createElement('div');
+    toast.className = 'tf-toast';
+    toast.textContent = '✦ Gemma 4 refined your nuggets';
+    overlayWrapper.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('out');
+        setTimeout(() => toast.remove(), 400);
+    }, 3000);
 }
