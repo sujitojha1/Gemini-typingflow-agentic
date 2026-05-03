@@ -41,6 +41,68 @@ let currentNuggetIndex = 0;
 let overlayWrapper = null;
 let startTime = null;
 let errorsMade = 0;
+let audioCtx = null;
+
+function getAudioCtx() {
+    if (!audioCtx) audioCtx = new AudioContext();
+    return audioCtx;
+}
+
+function playCorrectSound() {
+    const ctx = getAudioCtx();
+    const duration = 0.055;
+    const bufferSize = Math.floor(ctx.sampleRate * duration);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 6);
+    }
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 3500;
+    filter.Q.value = 0.7;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    source.start();
+}
+
+function playWrongSound() {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(90, now + 0.12);
+
+    const distortion = ctx.createWaveShaper();
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+        const x = (i * 2) / 256 - 1;
+        curve[i] = (Math.PI + 80) * x / (Math.PI + 80 * Math.abs(x));
+    }
+    distortion.curve = curve;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    osc.connect(distortion);
+    distortion.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.12);
+}
 
 const INJECT_CSS = `
   @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -66,12 +128,37 @@ const INJECT_CSS = `
   .tf-close-box:hover { color: #fff; background: rgba(255,255,255,0.1); }
   
   .tf-stats-bar {
-    display: flex; justify-content: space-between; align-items: center; max-width: 1100px; width: 100%; margin: 40px auto 20px;
+    display: flex; align-items: center; max-width: 1100px; width: 100%; margin: 40px auto 20px;
     font-size: 12px; color: #888; font-family: 'Menlo', monospace; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 20px;
   }
   .tf-nav-btns { display: flex; gap: 20px; }
   .tf-nav-btn { background: none; border: none; color: #4a8cd4; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; padding: 0; outline: none; margin: 0; }
   .tf-nav-btn.disabled { color: #444; cursor: not-allowed; }
+
+  .tf-bottom-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+    display: flex;
+    background: rgba(8, 8, 12, 0.96); backdrop-filter: blur(16px);
+    border-top: 1px solid rgba(255,255,255,0.07);
+  }
+  .tf-bottom-bar::before {
+    content: ''; position: absolute; top: 0; left: 0; height: 2px;
+    width: var(--tf-progress, 0%); background: linear-gradient(90deg, #4a8cd4, #27c93f);
+    transition: width 0.1s linear;
+  }
+  .tf-metric-box {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 16px 20px; border-right: 1px solid rgba(255,255,255,0.06);
+  }
+  .tf-metric-box:last-child { border-right: none; }
+  .tf-metric-val {
+    font-size: 26px; font-weight: 700; color: #ECEBDE; font-family: 'Menlo', monospace;
+    letter-spacing: -0.5px; line-height: 1;
+  }
+  .tf-metric-lbl {
+    font-size: 10px; color: #444; font-family: 'Menlo', monospace;
+    text-transform: uppercase; letter-spacing: 1.5px; margin-top: 5px;
+  }
   
   .tf-main-container {
     display: flex; gap: 40px; max-width: 1100px; margin: 0 auto; width: 100%; align-items: flex-start;
@@ -303,10 +390,9 @@ function renderCurrentNugget() {
                 <button class="tf-nav-btn ${isFirst ? 'disabled' : ''}" id="tf-prev-btn">&larr; prev</button>
                 <button class="tf-nav-btn" id="tf-next-btn">next &rarr;</button>
             </div>
-            <div id="tf-stats">0 wpm &middot; 100% acc &middot; 0/${textToType.length}</div>
         </div>
 
-        <div class="tf-main-container">
+        <div class="tf-main-container" style="padding-bottom: 100px;">
             <div class="tf-image-panel" id="tf-image-panel-${capturedIndex}"></div>
             <div class="tf-typing-panel">
                 <div class="tf-progress-bar">
@@ -315,6 +401,21 @@ function renderCurrentNugget() {
                 </div>
                 <div id="tf-target"></div>
                 <input type="text" class="tf-hidden-input" id="tf-type-input" autocomplete="off" spellcheck="false" />
+            </div>
+        </div>
+
+        <div class="tf-bottom-bar" id="tf-bottom-bar">
+            <div class="tf-metric-box">
+                <div class="tf-metric-val" id="tf-stat-wpm">0</div>
+                <div class="tf-metric-lbl">wpm</div>
+            </div>
+            <div class="tf-metric-box">
+                <div class="tf-metric-val" id="tf-stat-acc">100%</div>
+                <div class="tf-metric-lbl">accuracy</div>
+            </div>
+            <div class="tf-metric-box">
+                <div class="tf-metric-val" id="tf-stat-chars">0 / ${textToType.length}</div>
+                <div class="tf-metric-lbl">chars</div>
             </div>
         </div>
     `;
@@ -381,7 +482,11 @@ function renderCurrentNugget() {
     }
 
     const input = document.getElementById('tf-type-input');
-    const statsDiv = document.getElementById('tf-stats');
+    const statWpm = document.getElementById('tf-stat-wpm');
+    const statAcc = document.getElementById('tf-stat-acc');
+    const statChars = document.getElementById('tf-stat-chars');
+    const bottomBar = document.getElementById('tf-bottom-bar');
+    let prevTypedLen = 0;
 
     targetDiv.querySelectorAll('.tf-char')[0]?.classList.add('cursor');
     setTimeout(() => input.focus(), 100);
@@ -395,6 +500,16 @@ function renderCurrentNugget() {
             input.value = typed.slice(0, textToType.length);
             return;
         }
+
+        if (typed.length > prevTypedLen) {
+            const newCharIndex = typed.length - 1;
+            if (typed[newCharIndex] === textToType[newCharIndex]) {
+                playCorrectSound();
+            } else {
+                playWrongSound();
+            }
+        }
+        prevTypedLen = typed.length;
 
         let allCorrect = true;
         let localErrors = 0;
@@ -418,7 +533,10 @@ function renderCurrentNugget() {
         const wpm = timeElapsedMin > 0 ? Math.round(wordsTyped / timeElapsedMin) : 0;
         const acc = typed.length > 0 ? Math.round(((typed.length - localErrors) / typed.length) * 100) : 100;
         
-        statsDiv.innerHTML = `${wpm} wpm &middot; ${acc}% acc &middot; ${typed.length}/${textToType.length}`;
+        statWpm.textContent = wpm;
+        statAcc.textContent = `${acc}%`;
+        statChars.textContent = `${typed.length} / ${textToType.length}`;
+        bottomBar.style.setProperty('--tf-progress', `${Math.round((typed.length / textToType.length) * 100)}%`);
 
         if (typed.length === textToType.length && allCorrect) {
             currentNuggetIndex++;

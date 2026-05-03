@@ -63,16 +63,24 @@
     .loader-pulse { animation: pulse 2s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.4; } }
 
-    .footer { text-align: center; margin-top: 16px; }
-    .settings-link {
-        background: none; border: none; color: #4b5563; font-size: 12px;
-        cursor: pointer; font-family: inherit; padding: 4px 8px; border-radius: 6px;
-        transition: color 0.2s;
+    .topbar {
+        display: flex; justify-content: flex-end; margin-bottom: 4px;
     }
-    .settings-link:hover { color: #9ca3af; }
+    .btn-settings-icon {
+        background: none; border: 1px solid rgba(255,255,255,0.08); color: #4b5563;
+        width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: color 0.2s, border-color 0.2s, background 0.2s;
+        font-size: 15px; padding: 0;
+    }
+    .btn-settings-icon:hover { color: #9ca3af; border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); }
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <button id="btn-settings" class="btn-settings-icon" title="Settings">⚙</button>
+  </div>
+
   <div class="header">
     <div class="header-icon">✦</div>
     <h1>Gemini TypingFlow - Agentic</h1>
@@ -83,10 +91,6 @@
   <button id="btn-type" class="btn" disabled>Launch Typing Session</button>
   
   <div id="loader" class="loader-pulse">Initializing engine...</div>
-
-  <div class="footer">
-    <button id="btn-settings" class="settings-link">⚙ Settings</button>
-  </div>
 
   <script src="popup.js"></script>
 </body>
