@@ -12,11 +12,11 @@ Popup opens
 
 User clicks "Process Page Intelligence"
   → content.js extracts text blocks + image URLs from the page
-  → Track 1 (Normal Process): Gemini Flash Lite called immediately to generate chunks → gallery opens → popup closes
-  → Track 2 (Agentic Process): Gemma 4 agent triggers asynchronously in background
-      → fetches page images as base64, sends multimodal request to Google AI
+  → Track 1 (Normal Process): Primary Model Pool called immediately to generate chunks → gallery opens → popup closes
+  → Track 2 (Agentic Process): Parallel agent loops trigger asynchronously in background
+      → runs a multi-step toolchain: subject extraction, evaluation, content refinement, image matching/generation
       → on completion → extension switches to the later chunks
-      → toast: "✦ Gemma 4 refined your nuggets" → gallery updates in place
+      → toast: "✦ Agent refined your nuggets" → gallery updates in place
 
 User clicks any nugget card
   → typing overlay opens
@@ -32,13 +32,13 @@ Session complete → one-click Markdown export
 ### Two-Track Processing Pipeline
 TypingFlow utilizes a dual-track architecture triggered simultaneously when you click "Process Page Intelligence":
 
-1. **Track 1: Normal Process (`gemini-3.1-flash-lite-preview`)**
-   - Fast initial chunking that structures the page intelligence and generates the first set of chunks.
+1. **Track 1: Normal Process (Deterministic)**
+   - Fast initial chunking that structures the page intelligence and generates the first set of chunks using the primary model pool (e.g., `gemini-3.1-flash-lite-preview`).
    - Blocks the UI briefly (~2s) and mounts the gallery immediately for instant user interaction.
 
-2. **Track 2: Agentic Process (`gemma-4-31b-it`)**
-   - Triggers asynchronously in the background as soon as the extension button is clicked.
-   - Performs a deeper, multimodal agentic refinement (fetching page images as base64 `inlineData`) to produce a visually-grounded, more accurate chunk-to-image mapping.
+2. **Track 2: Agentic Process (Parallel Async Loop)**
+   - Triggers asynchronously in the background.
+   - Executes a 4-phase agentic workflow: Session & Content Indexing, Semantic Chunk Identification, Parallel Agent Loops (invoking tools like `getChunkStats`, `evaluateChunk`, `refineChunk`), and State Handoff.
    - Once the agent processing is done, the extension seamlessly **switches to the later chunks**, updating the gallery live with a toast notification. Both versions are preserved in session state.
 
 ### Agentic Page Intelligence
@@ -53,7 +53,7 @@ Full-screen between-state shown immediately after extraction:
 - `[01] — click to type ›` card per nugget with amber left-border accent
 - Thumbnail image or hexagon placeholder + 200-char text preview
 - Star rating (★★★★☆) and coverage % progress bar in header
-- `· ✦ refined by Gemma 4` suffix in subtitle once background model completes
+- `· ✦ refined by Agent` suffix in subtitle once background agent completes
 - Click any card to jump directly into typing
 
 ### Active Recall Typing Interface
@@ -81,9 +81,9 @@ On session completion, exports an Obsidian/Notion-ready `.md` file:
 | File | Role |
 |---|---|
 | `manifest.json` | MV3 manifest — permissions, background service worker, options UI |
-| `background.js` | Owns all API calls: Gemma 4 background chunking, Gemini text structuring, Gemini image generation, picsum fallback; pushes `update_nuggets` directly to tabs |
+| `background.js` | Owns all API calls: Agent pipeline orchestration, Gemini text structuring, Gemini image generation, picsum fallback; pushes `update_nuggets` directly to tabs |
 | `content.js` | DOM extraction; full overlay UI (gallery + typing + bottom bar); audio synthesis; `update_nuggets` handler with toast + live gallery refresh; Markdown export |
-| `popup.js` | Popup init — DOM scan on open; fires Gemma background task + Gemini call in parallel on extract; dynamic content script injection |
+| `popup.js` | Popup init — DOM scan on open; fires background task + Gemini call in parallel on extract; dynamic content script injection |
 | `popup.html` | Dark popup: header, word/image stat chips, refresh + settings icon buttons, action buttons, loader |
 | `options.html/js` | API key input, saved to `chrome.storage.sync` |
 
@@ -94,7 +94,7 @@ On session completion, exports an Obsidian/Notion-ready `.md` file:
 1. Load as unpacked extension at `chrome://extensions` (Developer Mode on)
 2. Click the extension icon → **⚙** → paste your Google AI API key → **Secure API Key**
 3. Navigate to any article — word count and image count appear instantly on popup open
-4. Click **Process Page Intelligence** — gallery opens in ~2s (Gemini), then refines silently (Gemma 4)
+4. Click **Process Page Intelligence** — gallery opens in ~2s (Normal Process), then refines silently (Agentic Process)
 5. Click any nugget card to start typing
 
 ---
@@ -103,8 +103,8 @@ On session completion, exports an Obsidian/Notion-ready `.md` file:
 
 | Model | Purpose |
 |---|---|
-| `gemma-4-31b-it` | Multimodal background chunking — text + images via Google AI |
-| `gemini-3.1-flash-lite-preview` | Fast initial text structuring |
+| `gemma-4-31b-it` | Alternative model in the pool for multimodal text/image background processing |
+| `gemini-3.1-flash-lite-preview` | Fast initial text structuring & Agentic semantic chunking and refinement loops |
 | `gemini-2.5-flash-image` | Per-nugget contextual image generation |
 
 All three use the same Google AI API key.

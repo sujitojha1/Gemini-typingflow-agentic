@@ -314,7 +314,7 @@ function renderNuggetGallery() {
     document.getElementById('tf-close-btn').addEventListener('click', closeOverlay);
 
     const sub = document.getElementById('tf-gallery-sub');
-    const refinedLabel = sessionData.isGemmaRefined ? ' · ✦ refined by Gemma 4' : '';
+    const refinedLabel = sessionData.isAgentRefined ? ' · ✦ refined by Agent' : (sessionData.isGemmaRefined ? ' · ✦ refined by Gemma 4' : '');
     sub.textContent = `${sessionData.nuggets.length} fragments${refinedLabel} · click any to type`;
 
     // Star rating
@@ -731,10 +731,10 @@ if (!window.geminiTfEventListening) {
                 if (request.data.tags) sessionData.tags = request.data.tags;
                 if (request.data.star_rating) sessionData.star_rating = request.data.star_rating;
                 if (request.data.coverage_pct != null) sessionData.coverage_pct = request.data.coverage_pct;
-                sessionData.isGemmaRefined = true;
+                sessionData.isAgentRefined = true;
 
                 // Show toast regardless of which view is active
-                showGemmaToast();
+                showAgentToast();
 
                 // If gallery is open, re-render cards in place
                 if (overlayWrapper && document.getElementById('tf-ncard-list')) {
@@ -760,11 +760,11 @@ function updateAgentBar(task, model) {
     if (modelEl) modelEl.textContent = model && model !== 'null' ? `· ${model}` : '';
 }
 
-function showGemmaToast() {
+function showAgentToast() {
     if (!overlayWrapper) return;
     const toast = document.createElement('div');
     toast.className = 'tf-toast';
-    toast.textContent = '✦ Gemma 4 refined your nuggets';
+    toast.textContent = '✦ Agent refined your nuggets';
     overlayWrapper.appendChild(toast);
     setTimeout(() => {
         toast.classList.add('out');

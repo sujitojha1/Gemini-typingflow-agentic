@@ -86,9 +86,9 @@ Displayed in a `page-meta` row between the header and action buttons, alongside 
 
 ---
 
-### Tweak 2 — Dual-Model Parallel Chunking ✅
+### Tweak 2 — Dual-Track Agentic Workflow ✅
 
-Two models run simultaneously on every extraction. The user sees Gemini results immediately; Gemma 4 refines them in the background without blocking the UI.
+Two processes run on every extraction. The user sees the deterministic Normal Process results immediately, while the Agentic Process refines them in the background via a multi-step toolchain without blocking the UI.
 
 **Flow:**
 
@@ -97,31 +97,36 @@ User clicks Process Page Intelligence
   ↓
 DOM extracted (text blocks + image URLs)
   ↓
-┌─────────────────────────────────┐   ┌──────────────────────────────────────────┐
-│ proxy_gemini_api                │   │ proxy_gemma_background                   │
-│ gemini-3.1-flash-lite-preview   │   │ gemma-4-31b-it via Google AI             │
-│                                 │   │                                          │
-│ Fast text-only structuring      │   │ Fetches up to 5 page images as base64    │
-│ ~2s                             │   │ Sends multimodal request (text+images)   │
-│                                 │   │ ~8–15s                                   │
-└────────────┬────────────────────┘   └───────────────┬──────────────────────────┘
+┌─────────────────────────────────┐   ┌──────────────────────────────────────────────┐
+│ Track 1: Normal Process         │   │ Track 2: Agentic Process                     │
+│ (Primary Model Pool)            │   │ (4-Phase Async Pipeline)                     │
+│                                 │   │                                              │
+│ Fast text-only structuring      │   │ 1. Session & Content Indexing                │
+│ ~2s                             │   │ 2. Semantic Chunk Identification             │
+│                                 │   │ 3. Parallel Agent Loops (per chunk)          │
+│                                 │   │    • Image matching / generation             │
+│                                 │   │    • getChunkStats, extractSubject           │
+│                                 │   │    • evaluateChunk, refineChunk              │
+│                                 │   │    • updateCoverage                          │
+│                                 │   │ 4. State Handoff                             │
+└────────────┬────────────────────┘   └───────────────┬──────────────────────────────┘
              ↓                                        ↓
      Gallery mounts immediately            background.js pushes update_nuggets
      popup closes                          to tab via chrome.tabs.sendMessage
                                                        ↓
                                            content.js receives update_nuggets:
                                              • sessionData.geminiNuggets = original
-                                             • sessionData.nuggets = Gemma refined
-                                             • sessionData.isGemmaRefined = true
-                                             • toast: "✦ Gemma 4 refined your nuggets"
+                                             • sessionData.nuggets = Agent refined
+                                             • sessionData.isAgentRefined = true
+                                             • toast: "✦ Agent refined your nuggets"
                                              • gallery re-renders if open
 ```
 
-**Why Gemma 4 for re-chunking:**
-Gemma 4's multimodal capability lets it *see* the page images alongside the text, enabling true visual chunk-to-image mapping rather than proximity guessing. The result is more semantically coherent nuggets with better image associations.
+**Why an Agentic Loop for re-chunking:**
+The agent runs an independent async loop per chunk. It extracts subjects, evaluates chunk quality, optionally refines the text if the clarity score is low, and dynamically matches or generates images contextually. This ensures the nuggets are deeply synthesized rather than just structured.
 
 **Session state preservation:**
-Both versions are kept in memory — `sessionData.geminiNuggets` (Gemini original) and `sessionData.nuggets` (Gemma refined, live after update). The gallery subtitle appends `· ✦ refined by Gemma 4` when the update arrives.
+Both versions are kept in memory — `sessionData.geminiNuggets` (original) and `sessionData.nuggets` (Agent refined, live after update). The gallery subtitle appends `· ✦ refined by Agent` when the update arrives.
 
 ---
 
