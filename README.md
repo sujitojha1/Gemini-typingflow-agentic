@@ -14,7 +14,7 @@ User clicks "Process Page Intelligence"
   → content.js extracts text blocks + image URLs from the page
   → Track 1 (Normal Process): Primary Model Pool called immediately to generate chunks → gallery opens → popup closes
   → Track 2 (Agentic Process): Parallel agent loops trigger asynchronously in background
-      → runs a multi-step toolchain: subject extraction, evaluation, content refinement, image matching/generation
+      → runs a multi-step toolchain: relevance checking (ad filtering), subject extraction, evaluation, content refinement, image matching/generation
       → on completion → extension switches to the later chunks
       → toast: "✦ Agent refined your nuggets" → gallery updates in place
 
@@ -38,7 +38,7 @@ TypingFlow utilizes a dual-track architecture triggered simultaneously when you 
 
 2. **Track 2: Agentic Process (Parallel Async Loop)**
    - Triggers asynchronously in the background.
-   - Executes a 4-phase agentic workflow: Session & Content Indexing, Semantic Chunk Identification, Parallel Agent Loops (invoking tools like `getChunkStats`, `evaluateChunk`, `refineChunk`), and State Handoff.
+   - Executes a 4-phase agentic workflow: Session & Content Indexing, Semantic Chunk Identification, Parallel Agent Loops (invoking tools like `checkRelevance`, `getChunkStats`, `evaluateChunk`, `refineChunk`), and State Handoff.
    - Once the agent processing is done, the extension seamlessly **switches to the later chunks**, updating the gallery live with a toast notification. Both versions are preserved in session state.
 
 ### Agentic Page Intelligence
