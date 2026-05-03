@@ -2,6 +2,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnExtract = document.getElementById('btn-extract');
     const btnType = document.getElementById('btn-type');
     const loader = document.getElementById('loader');
+    const btnSettings = document.getElementById('btn-settings');
+
+    btnSettings.addEventListener('click', () => {
+        chrome.runtime.openOptionsPage();
+    });
 
     function updateLoader(msg) {
         loader.style.display = 'block';
