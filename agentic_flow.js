@@ -342,37 +342,18 @@ async function runAgenticLoop(tabId, payload) {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
         const turnStart = Date.now();
 
-        // ── Call LLM with model rotation failsafe ────────────────────────────
-        let turnModel = pickAgentModel();
+        // ── Call LLM ─────────────────────────────────────────────────────────
+        // Pick a random model for this turn
+        const turnModel = pickAgentModel();
         agentBroadcast(tabId, '[Agent] Thinking...', turnModel.label, `Turn ${turn + 1}...`);
 
         let action;
-        {
-            const triedIds = new Set([turnModel.id]);
-            let modelAttempt = 0;
-            const MAX_MODEL_RETRIES = 5;
-            while (true) {
-                try {
-                    action = await callAgent(messages, geminiApiKey, turnModel.id);
-                    break;
-                } catch (e) {
-                    modelAttempt++;
-                    console.warn(`[agent] ${turnModel.label} failed (attempt ${modelAttempt}):`, e.message);
-                    if (modelAttempt >= MAX_MODEL_RETRIES) {
-                        agentBroadcast(tabId, '[Agent] All retries exhausted', turnModel.label,
-                            `${MAX_MODEL_RETRIES} models tried — ${e.message}`);
-                        return;
-                    }
-                    const candidates = AGENT_MODEL_POOL.filter(m => !triedIds.has(m.id));
-                    const next = candidates.length
-                        ? candidates[Math.floor(Math.random() * candidates.length)]
-                        : AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
-                    triedIds.add(next.id);
-                    turnModel = next;
-                    agentBroadcast(tabId, '[Agent] Rotating model...', turnModel.label,
-                        `Attempt ${modelAttempt + 1}/${MAX_MODEL_RETRIES}`);
-                }
-            }
+        try {
+            action = await callAgent(messages, geminiApiKey, turnModel.id);
+        } catch (e) {
+            console.warn('[agent] LLM error:', e.message);
+            agentBroadcast(tabId, '[Agent] LLM error', turnModel.label, e.message);
+            break;
         }
         const llmMs = Date.now() - turnStart;
 
