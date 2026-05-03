@@ -28,6 +28,7 @@ After extraction, a full-screen gallery opens automatically showing all nuggets 
 ### Active Recall Typing Interface
 A full-screen monospace overlay with:
 - Character-by-character real-time validation (green correct / red wrong)
+- Real-time synthesized audio feedback for keystrokes via Web Audio API
 - Live WPM and accuracy stats
 - Prev / Next nugget navigation
 - Contextual image panel (sticky, left side)
@@ -52,9 +53,9 @@ On session completion, one click exports an Obsidian/Notion-ready `.md` file:
 |---|---|
 | `manifest.json` | MV3 manifest — permissions, service worker declaration |
 | `background.js` | Secure proxy to Gemini APIs; handles text structuring and image generation; converts fallback images to base64 data URLs to bypass CSP |
-| `content.js` | DOM extraction, full overlay UI (gallery + typing), markdown export |
-| `popup.js` | Extension popup — triggers extraction, shows loader states, auto-opens gallery on completion |
-| `popup.html` | Terminal-styled popup UI |
+| `content.js` | DOM extraction, full overlay UI (gallery + typing), audio feedback synthesis, markdown export |
+| `popup.js` | Extension popup — triggers extraction, dynamically injects content script if missing, shows loader states, auto-opens gallery |
+| `popup.html` | Terminal-styled popup UI with settings access |
 | `options.html` / `options.js` | API key management (stored in `chrome.storage.sync`) |
 
 ### Data Flow

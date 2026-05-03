@@ -54,3 +54,8 @@
 - [x] Null guard in `popup.js` `btnType` handler: checks `tabs && tabs.length > 0` before accessing `tabs[0]`.
 - [x] Optional chaining on `candidates[0]?.content?.parts[0]?.text` guards against unexpected Gemini API response shapes.
 - [x] Image error logging: `img.onerror` handler + `console.warn` on failed generation responses; loader updates to `⬡ visual unavailable` to surface failures visibly.
+
+## Phase 9: Audio Feedback & Pipeline Polish
+- [x] Integrate Web Audio API for subtle, synthesized sound effects on correct/incorrect keystrokes without requiring external audio file dependencies.
+- [x] Implement robust dynamic content script injection in `popup.js` to ensure the extension works seamlessly even if the page was loaded before the extension was updated.
+- [x] Add a direct settings access icon (⚙) in the popup terminal header for easier API key management.
