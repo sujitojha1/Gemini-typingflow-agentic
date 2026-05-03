@@ -1,29 +1,150 @@
 const GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
-const GEMMA_MODEL = "gemma-4-31b-it";
+const GEMMA_MODEL       = "gemma-4-31b-it";
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "proxy_gemma_background") {
-        // Fire-and-forget: Gemma runs after popup closes, pushes result directly to tab
-        const { payload, tabId } = request;
+// Model pool for primary structuring — tried in order, rotates on failure
+const MODEL_POOL = [
+    { id: 'gemini-3.1-flash-lite-preview',  label: 'Gemini Flash Lite', vision: false },
+    { id: 'gemini-2.0-flash',               label: 'Gemini Flash 2.0',  vision: false },
+    { id: 'gemini-2.5-flash-preview-05-20', label: 'Gemini Flash 2.5',  vision: false },
+    { id: 'gemma-4-31b-it',                 label: 'Gemma 4 31B',       vision: true  },
+];
+
+// ── Agent utilities ──────────────────────────────────────────────────────────
+
+function agentBroadcast(tabId, task, model, detail = '') {
+    const msg = { action: 'agent_status', task, model, detail };
+    // → content script in the tab
+    chrome.tabs.sendMessage(tabId, msg, () => { chrome.runtime.lastError; });
+    // → popup (if still open)
+    chrome.runtime.sendMessage(msg, () => { chrome.runtime.lastError; });
+}
+
+function tabMessage(tabId, msg) {
+    return new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tabId, msg, (resp) => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(resp);
+        });
+    });
+}
+
+async function extractFromTab(tabId) {
+    try {
+        const resp = await tabMessage(tabId, { action: 'extract_content' });
+        if (resp?.payload) return resp.payload;
+    } catch (_) {}
+    // content script not loaded — inject it
+    await new Promise((resolve, reject) => {
+        chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }, r => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(r);
+        });
+    });
+    await new Promise(r => setTimeout(r, 300));
+    const resp = await tabMessage(tabId, { action: 'extract_content' });
+    return resp?.payload || null;
+}
+
+async function callModelForStructuring(payload, model) {
+    return model.vision ? callGemmaAPI(payload) : callGeminiWithModel(payload, model.id);
+}
+
+// ── Agent pipeline ───────────────────────────────────────────────────────────
+
+async function runAgentPipeline(tabId) {
+    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
+    if (!geminiApiKey) {
+        agentBroadcast(tabId, 'error', null, 'API key not configured');
+        return;
+    }
+
+    // TASK: extract
+    agentBroadcast(tabId, 'extracting page content', '—');
+    let payload;
+    try {
+        payload = await extractFromTab(tabId);
+    } catch (e) {
+        agentBroadcast(tabId, 'error', null, 'injection blocked by Chrome');
+        return;
+    }
+    if (!payload?.length) {
+        agentBroadcast(tabId, 'error', null, 'no extractable content');
+        return;
+    }
+
+    await chrome.storage.local.set({ tf_agent_payload: payload, tf_agent_tab: tabId });
+
+    // TASK: structure with model rotation
+    let structureResult = null;
+    let usedModel = null;
+    for (const model of MODEL_POOL) {
+        agentBroadcast(tabId, 'structuring nuggets', model.label);
+        try {
+            const result = await callModelForStructuring(payload, model);
+            if (result.success) { structureResult = result; usedModel = model; break; }
+            console.warn(`[agent] ${model.label} failed:`, result.error);
+        } catch (e) {
+            console.warn(`[agent] ${model.label} threw:`, e.message);
+        }
+    }
+    if (!structureResult) {
+        agentBroadcast(tabId, 'error', null, 'all models exhausted');
+        return;
+    }
+
+    // TASK: mount gallery
+    agentBroadcast(tabId, 'mounting gallery', usedModel.label);
+    await tabMessage(tabId, { action: 'mount_ui', data: structureResult.api_response })
+        .catch(() => {});
+    chrome.tabs.sendMessage(tabId, { action: 'open_overlay' }, () => { chrome.runtime.lastError; });
+
+    // signal popup to close
+    chrome.runtime.sendMessage({ action: 'agent_close_popup' }, () => { chrome.runtime.lastError; });
+
+    // persist session
+    await chrome.storage.local.set({
+        tf_agent_session: {
+            timestamp: Date.now(),
+            model: usedModel.label,
+            nuggetCount: structureResult.api_response.nuggets?.length,
+            tldr: structureResult.api_response.tldr,
+            tags: structureResult.api_response.tags,
+        }
+    });
+
+    agentBroadcast(tabId, 'complete', usedModel.label,
+        `${structureResult.api_response.nuggets?.length} nuggets`);
+
+    // TASK: background Gemma refinement (always, regardless of which model mounted)
+    if (usedModel.id !== GEMMA_MODEL) {
+        agentBroadcast(tabId, 'refining with Gemma 4', 'Gemma 4 31B');
         callGemmaAPI(payload).then(result => {
             if (result.success) {
-                chrome.tabs.sendMessage(tabId, { action: "update_nuggets", data: result.api_response },
-                    () => { chrome.runtime.lastError; }); // suppress error if tab/overlay is gone
+                chrome.tabs.sendMessage(tabId,
+                    { action: 'update_nuggets', data: result.api_response },
+                    () => { chrome.runtime.lastError; });
+                agentBroadcast(tabId, 'refined', 'Gemma 4 31B');
             } else {
-                console.warn('[typingflow] Gemma background failed:', result.error);
+                console.warn('[agent] Gemma refinement failed:', result.error);
             }
         });
-        sendResponse({ queued: true });
+    }
+}
+
+// ── Message router ───────────────────────────────────────────────────────────
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "agent_start") {
+        runAgentPipeline(request.tabId);
+        sendResponse({ started: true });
         return true;
     }
     if (request.action === "proxy_gemini_api") {
-        console.log("[typingflow] Routing to Gemini text API...");
         callGeminiAPI(request.payload).then(sendResponse);
         return true;
     }
     if (request.action === "generate_image_asset") {
-        console.log("[typingflow] Routing to image API...");
         generateContextualImage(request.payload).then(sendResponse);
         return true;
     }
@@ -54,6 +175,33 @@ EXPECTED JSON SCHEMA:
     }
   ]
 }`;
+
+async function callGeminiWithModel(payload, modelId) {
+    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
+    if (!geminiApiKey) return { error: "API Key not configured." };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+    const fullPrompt = SYSTEM_PROMPT + "\n\nRAW SCRAPED CONTENT:\n" + JSON.stringify(payload);
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: fullPrompt }] }],
+                generationConfig: { response_mime_type: "application/json" }
+            })
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            return { error: `${modelId} error (${response.status}): ${err.error?.message || response.statusText}` };
+        }
+        const data = await response.json();
+        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!jsonText) return { error: `${modelId} returned empty response.` };
+        return { success: true, api_response: JSON.parse(jsonText) };
+    } catch (e) {
+        return { error: `${modelId} request failed: ${e.message}` };
+    }
+}
 
 async function callGemmaAPI(payload) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');

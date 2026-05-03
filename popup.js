@@ -23,10 +23,24 @@ document.addEventListener('DOMContentLoaded', () => {
         loader.style.display = 'block';
         loader.innerText = `${msg}...`;
     }
-
     function hideLoader() { loader.style.display = 'none'; }
 
-    // On popup open: scan page stats + check existing session in one query
+    // Listen for agent status pushed from background
+    chrome.runtime.onMessage.addListener((msg) => {
+        if (msg.action === 'agent_status') {
+            const label = msg.model && msg.model !== 'null' ? `${msg.task}  ·  ${msg.model}` : msg.task;
+            updateLoader(label);
+            if (msg.task === 'error') {
+                btnExtract.disabled = false;
+                updateLoader(`Error: ${msg.detail || msg.task}`);
+            }
+        }
+        if (msg.action === 'agent_close_popup') {
+            window.close();
+        }
+    });
+
+    // On popup open: scan page stats + check existing session
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs || tabs.length === 0) return;
         const tabId = tabs[0].id;
@@ -59,107 +73,24 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Hand off the entire pipeline to the background agent
     btnExtract.addEventListener('click', () => {
-        btnExtract.disabled = true;
-        updateLoader('Parsing Sequence');
-
-        chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs || tabs.length === 0) {
                 updateLoader('Error: No active tab found');
-                btnExtract.disabled = false;
                 return;
             }
-            
-            const tabId = tabs[0].id;
-
-            const mountAndOpen = (json) => {
-                updateLoader('Rendering Image Assets via Flash 2.5');
-                chrome.tabs.sendMessage(tabId, { action: "mount_ui", data: json }, () => {
-                    if (chrome.runtime.lastError) console.error(chrome.runtime.lastError.message);
-                    hideLoader();
-                    btnType.disabled = false;
-                    btnExtract.innerText = "Extract New Insights";
-                    btnExtract.disabled = false;
-                    chrome.tabs.sendMessage(tabId, { action: "open_overlay" });
-                    window.close();
-                });
-            };
-
-            const handleExtractionResponse = (resp) => {
-                if (!resp || !resp.payload) {
-                    updateLoader('DOM Extraction Failed');
-                    btnExtract.disabled = false;
-                    return;
-                }
-
-                // Agentic Tweak 2: kick off Gemma in background service worker immediately
-                // (background.js owns the call and will push update_nuggets to the tab when done)
-                chrome.runtime.sendMessage({ action: "proxy_gemma_background", payload: resp.payload, tabId });
-
-                // Mount Gemini results immediately so user can start without waiting
-                updateLoader('Synthesizing with Gemini Flash Lite 3.1 Preview');
-                chrome.runtime.sendMessage({ action: "proxy_gemini_api", payload: resp.payload }, (apiResp) => {
-                    if (chrome.runtime.lastError) {
-                        updateLoader('Error: Background Service Worker offline');
-                        btnExtract.disabled = false;
-                        return;
-                    }
-                    if (apiResp.error) {
-                        updateLoader(`Error: ${apiResp.error}`);
-                        btnExtract.disabled = false;
-                        return;
-                    }
-                    mountAndOpen(apiResp.api_response);
-                });
-            };
-
-            const attemptExtraction = () => {
-                chrome.tabs.sendMessage(tabId, { action: "extract_content" }, (resp) => {
-                    if (chrome.runtime.lastError) {
-                        updateLoader('Init Failed: Chrome restricted script execution on this page.');
-                        btnExtract.disabled = false;
-                        return;
-                    }
-                    handleExtractionResponse(resp);
-                });
-            };
-
-            // Attempt primary messaging sequence
-            chrome.tabs.sendMessage(tabId, { action: "extract_content" }, (resp) => {
-                // If content script isn't loaded (user recently updated the extension and didn't refresh the page)
-                if (chrome.runtime.lastError) {
-                    console.warn("Content script disconnected. Automatically injecting via execution pipeline...");
-                    updateLoader('Dynamically Injecting Content Script');
-                    
-                    chrome.scripting.executeScript({
-                        target: { tabId: tabId },
-                        files: ['content.js']
-                    }, () => {
-                        if (chrome.runtime.lastError) {
-                            console.error(chrome.runtime.lastError.message);
-                            updateLoader('Init Failed: Chrome restricted injection on this tab.');
-                            btnExtract.disabled = false;
-                            return;
-                        }
-                        // Give the newly injected script 250ms to attach its listeners, then hit it again
-                        setTimeout(attemptExtraction, 250);
-                    });
-                    return;
-                }
-                
-                // If the script was already there, process naturally
-                handleExtractionResponse(resp);
-            });
+            btnExtract.disabled = true;
+            updateLoader('Starting agent');
+            chrome.runtime.sendMessage({ action: 'agent_start', tabId: tabs[0].id });
         });
     });
 
     btnType.addEventListener('click', () => {
-        chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs || tabs.length === 0) return;
             chrome.tabs.sendMessage(tabs[0].id, { action: "open_overlay" }, () => {
-                if (chrome.runtime.lastError) {
-                    console.error("Overlay error:", chrome.runtime.lastError.message);
-                }
+                if (chrome.runtime.lastError) console.error("Overlay error:", chrome.runtime.lastError.message);
             });
         });
     });

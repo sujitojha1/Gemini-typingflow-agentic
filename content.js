@@ -116,6 +116,23 @@ const INJECT_CSS = `
     animation: fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1); overflow-y: auto; box-sizing: border-box;
   }
   #tf-overlay-root * { box-sizing: border-box; text-transform: none; }
+
+  .tf-agent-bar {
+    display: flex; align-items: center; gap: 10px; padding: 5px 24px;
+    background: rgba(0,0,0,0.45); border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 11px; font-family: 'Menlo', monospace; letter-spacing: 0.4px;
+    color: #374151; min-height: 26px; flex-shrink: 0;
+  }
+  .tf-agent-pip {
+    width: 5px; height: 5px; border-radius: 50%; background: #1f2937; flex-shrink: 0; transition: background 0.4s;
+  }
+  .tf-agent-bar.tf-agent-active .tf-agent-pip { background: #4a8cd4; animation: pulse 1.5s infinite; }
+  .tf-agent-bar.tf-agent-active { color: #4b5563; }
+  .tf-agent-bar.tf-agent-done .tf-agent-pip { background: #27c93f; }
+  .tf-agent-bar.tf-agent-done { color: #374151; }
+  .tf-agent-bar.tf-agent-error .tf-agent-pip { background: #ff5555; animation: none; }
+  .tf-agent-bar.tf-agent-error { color: #ff5555; }
+  .tf-agent-model-label { color: #4a8cd4; margin-left: 2px; }
   
   .tf-topbar { 
     display: flex; justify-content: space-between; align-items: center; 
@@ -256,6 +273,11 @@ function mountUI(data) {
 
 function renderNuggetGallery() {
     overlayWrapper.innerHTML = `
+        <div class="tf-agent-bar tf-agent-active" id="tf-agent-bar">
+            <div class="tf-agent-pip"></div>
+            <span id="tf-agent-task">agent · ready</span>
+            <span class="tf-agent-model-label" id="tf-agent-model"></span>
+        </div>
         <div class="tf-topbar">
             <div class="tf-dots">
                 <div class="tf-dot tf-dot-r"></div>
@@ -391,6 +413,11 @@ function renderCurrentNugget() {
     }).join('');
 
     overlayWrapper.innerHTML = `
+        <div class="tf-agent-bar tf-agent-active" id="tf-agent-bar">
+            <div class="tf-agent-pip"></div>
+            <span id="tf-agent-task">agent · ready</span>
+            <span class="tf-agent-model-label" id="tf-agent-model"></span>
+        </div>
         <div class="tf-topbar">
             <div class="tf-dots">
                 <div class="tf-dot tf-dot-r"></div>
@@ -638,6 +665,9 @@ if (!window.geminiTfEventListening) {
             sendResponse({ success: true });
         } else if (request.action === 'check_session') {
             sendResponse({ hasSession: !!sessionData });
+        } else if (request.action === 'agent_status') {
+            updateAgentBar(request.task, request.model);
+            sendResponse({ ok: true });
         } else if (request.action === 'update_nuggets') {
             if (sessionData) {
                 sessionData.geminiNuggets = sessionData.geminiNuggets || sessionData.nuggets;
@@ -659,6 +689,20 @@ if (!window.geminiTfEventListening) {
             sendResponse({ success: true });
         }
     });
+}
+
+function updateAgentBar(task, model) {
+    const bar     = document.getElementById('tf-agent-bar');
+    const taskEl  = document.getElementById('tf-agent-task');
+    const modelEl = document.getElementById('tf-agent-model');
+    if (!bar) return;
+
+    const isDone  = task === 'complete' || task === 'refined';
+    const isError = task === 'error';
+
+    bar.className = 'tf-agent-bar ' + (isError ? 'tf-agent-error' : isDone ? 'tf-agent-done' : 'tf-agent-active');
+    if (taskEl) taskEl.textContent = `agent · ${task}`;
+    if (modelEl) modelEl.textContent = model && model !== 'null' ? `· ${model}` : '';
 }
 
 function showGemmaToast() {

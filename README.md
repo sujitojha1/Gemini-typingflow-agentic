@@ -1,58 +1,76 @@
 # Gemini TypingFlow — Agentic
 
-An intelligent Chrome extension that transforms dense web articles into active-recall typing sessions, powered by the Google Gemini API.
+A Chrome extension that transforms dense web articles into active-recall typing sessions. It extracts page content, structures it into semantic nuggets via LLM, generates contextual visuals, and drops you into a focused typing interface — burning key ideas into memory through doing, not passive reading.
 
-It extracts page content, structures it into semantic nuggets via LLM, generates contextual visuals, and drops you into a focused typing interface — burning key ideas into memory, not just passive reading.
+---
+
+## How It Works
+
+```
+Popup opens
+  → instant DOM scan → word count + image count displayed
+
+User clicks "Process Page Intelligence"
+  → content.js extracts text blocks + image URLs from the page
+  → Gemini Flash Lite called immediately → nuggets mounted → gallery opens → popup closes
+  → Gemma 4 runs in background service worker simultaneously
+      → fetches page images as base64, sends multimodal request to Google AI
+      → on completion → pushes refined nuggets directly to the tab
+      → toast: "✦ Gemma 4 refined your nuggets" → gallery updates in place
+
+User clicks any nugget card
+  → typing overlay opens
+  → Gemini Flash Image generates contextual visuals in background per nugget
+
+Session complete → one-click Markdown export
+```
 
 ---
 
 ## Features
 
+### Dual-Model Nugget Pipeline
+Two models run in parallel on every extraction:
+
+| Model | Role | Timing |
+|---|---|---|
+| `gemini-3.1-flash-lite-preview` | Fast initial chunking — mounts gallery immediately | Blocks until done (~2s) |
+| `gemma-4-31b-it` | Multimodal re-chunking with visual image mapping | Background, non-blocking |
+
+Gemini gets the user into the gallery fast. Gemma 4 takes its time with the page images (fetched as base64 `inlineData`) to produce a visually-grounded, more accurate chunk-to-image mapping. When Gemma finishes, the gallery updates live with a toast notification. Both versions are preserved in session state (`sessionData.geminiNuggets` and `sessionData.nuggets`).
+
 ### Agentic Page Intelligence
-The extension runs a lightweight DOM scan the instant the popup opens — before any API call — and surfaces a real-time content snapshot:
-- **Char count** — non-whitespace characters in the article body
-- **Word count** — word density of the extractable content
-- **Image count** — qualifying images (>100px, non-data-URI) on the page
+The popup runs a lightweight DOM scan the instant it opens — before any API call — and surfaces two real-time chips:
+- **words** — word count of extractable article text
+- **images** — qualifying images (>100px, non-data-URI) on the page
 
-This gives an at-a-glance sense of the article's depth before committing to extraction.
+Implemented as an inline `func:` passed to `chrome.scripting.executeScript` — no round-trip, zero latency.
 
-### LLM-Powered Semantic Structuring
-Gemini analyzes the full page and returns a structured JSON payload:
-- **TL;DR** — single-sentence page summary
-- **Tags** — auto-extracted semantic domain tags (e.g. `#machinelearning`)
-- **Nuggets** — logically grouped chunks of the original author's text, preserving voice
-- **Star Rating** — Gemini's 1–5 editorial quality and depth assessment of the article
-- **Coverage %** — percentage of the page's meaningful content captured across nuggets
-
-### Nugget Gallery (Between-Screen)
-After extraction, a full-screen gallery opens automatically showing all nuggets as cards before typing begins:
-- `[01] — click to type ›` label per card with amber left-border accent
-- Thumbnail image (if pre-existing from the page) or hexagon placeholder
-- 200-char text preview
-- Star rating (★★★★☆) and coverage progress bar in the header
-- Click any card to jump directly into typing that nugget
-- `☰ all` button in the typing view returns to the gallery at any time
+### Nugget Gallery
+Full-screen between-state shown immediately after extraction:
+- `[01] — click to type ›` card per nugget with amber left-border accent
+- Thumbnail image or hexagon placeholder + 200-char text preview
+- Star rating (★★★★☆) and coverage % progress bar in header
+- `· ✦ refined by Gemma 4` suffix in subtitle once background model completes
+- Click any card to jump directly into typing
 
 ### Active Recall Typing Interface
-A full-screen monospace overlay with:
-- Character-by-character real-time validation (green correct / red wrong)
-- **Segmented progress bar** — pip track showing done/active/pending nuggets with "2 of 4" label
-- Real-time synthesized audio feedback (soft click for correct, low thud for wrong) via Web Audio API
-- **Fixed bottom metrics bar** — WPM, accuracy, and char progress in three distinct boxes with a live gradient fill line
-- Prev / Next nugget navigation
-- Contextual image panel (sticky, left side)
-- Auto-advances to the next nugget on perfect completion
+- Character-by-character validation — green correct, red wrong
+- **Segmented pip progress bar** — done (green) / active (blue glow) / pending (dark), with "2 of 4" counter
+- **Web Audio feedback** — soft bandpass noise burst on correct key, low sine-wave thud on wrong key (synthesized, no external files, `AudioContext.resume()` handles Chrome's autoplay suspension)
+- **Fixed bottom metrics bar** — three boxes: WPM · Accuracy · Chars, with a live gradient fill line tracking completion
+- Prev / Next navigation; auto-advances on perfect nugget completion
 
 ### Hybrid Visual Context
-- Page images semantically matched to nuggets by the LLM are preserved and displayed
-- For nuggets without a page image, **gemini-2.5-flash-image** generates a representative visual in the background
-- All images are returned as base64 `data:` URIs from the background service worker, bypassing page Content-Security-Policy restrictions
+- Page images mapped to nuggets by the LLM are displayed immediately
+- For nuggets without a page image, `gemini-2.5-flash-image` generates a contextual visual asynchronously
+- All images converted to base64 `data:` URIs in the service worker to bypass page Content-Security-Policy
 
 ### Second Brain Markdown Export
-On session completion, one click exports an Obsidian/Notion-ready `.md` file:
-- YAML frontmatter with date, tags, and source URL
+On session completion, exports an Obsidian/Notion-ready `.md` file:
+- YAML frontmatter: date, tags, source URL
 - TL;DR block quote
-- Each nugget formatted as a section with embedded image
+- Each nugget as a section with embedded image
 
 ---
 
@@ -60,63 +78,48 @@ On session completion, one click exports an Obsidian/Notion-ready `.md` file:
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3 manifest — permissions, service worker, options UI declaration |
-| `background.js` | Secure proxy to Gemini APIs; handles text structuring and image generation; converts fallback images to base64 data URLs to bypass CSP |
-| `content.js` | DOM extraction, full overlay UI (gallery + typing + bottom metrics), audio feedback synthesis, markdown export |
-| `popup.js` | Extension popup — instant page stats scan, triggers extraction, dynamically injects content script if missing, shows loader states, auto-opens gallery |
-| `popup.html` | Dark popup UI with gear settings button and page intelligence chips |
-| `options.html` / `options.js` | API key management (stored in `chrome.storage.sync`) |
-
-### Data Flow
-
-```
-Popup opens
-  → chrome.scripting.executeScript scans DOM (chars, words, images)
-  → Stats chips rendered instantly in popup (no API call)
-
-User clicks Extract
-  → popup.js extracts DOM via content.js
-  → background.js calls gemini-3.1-flash-lite-preview
-  → JSON payload (tldr, tags, nuggets, star_rating, coverage_pct) returned
-  → content.js mounts session data
-  → Gallery screen auto-opens (popup closes)
-  → User clicks any nugget card
-  → Typing overlay renders; background starts image generation via gemini-2.5-flash-image
-  → On completion → Markdown export
-```
+| `manifest.json` | MV3 manifest — permissions, background service worker, options UI |
+| `background.js` | Owns all API calls: Gemma 4 background chunking, Gemini text structuring, Gemini image generation, picsum fallback; pushes `update_nuggets` directly to tabs |
+| `content.js` | DOM extraction; full overlay UI (gallery + typing + bottom bar); audio synthesis; `update_nuggets` handler with toast + live gallery refresh; Markdown export |
+| `popup.js` | Popup init — DOM scan on open; fires Gemma background task + Gemini call in parallel on extract; dynamic content script injection |
+| `popup.html` | Dark popup: header, word/image stat chips, refresh + settings icon buttons, action buttons, loader |
+| `options.html/js` | API key input, saved to `chrome.storage.sync` |
 
 ---
 
 ## Setup
 
-1. Clone the repo and load it as an unpacked extension in `chrome://extensions` (Developer Mode on)
-2. Click the extension icon → ⚙ (gear icon, top-right) → paste your Gemini API key → Save
-3. Navigate to any article and click the extension icon — page stats appear instantly
-4. Click **Process Page Intelligence** → the nugget gallery opens automatically
-5. Click any card to start typing
+1. Load as unpacked extension at `chrome://extensions` (Developer Mode on)
+2. Click the extension icon → **⚙** → paste your Google AI API key → **Secure API Key**
+3. Navigate to any article — word count and image count appear instantly on popup open
+4. Click **Process Page Intelligence** — gallery opens in ~2s (Gemini), then refines silently (Gemma 4)
+5. Click any nugget card to start typing
 
 ---
 
 ## Models Used
 
-| Purpose | Model |
+| Model | Purpose |
 |---|---|
-| Text structuring & nugget extraction | `gemini-3.1-flash-lite-preview` |
-| Contextual image generation | `gemini-2.5-flash-image` |
+| `gemma-4-31b-it` | Multimodal background chunking — text + images via Google AI |
+| `gemini-3.1-flash-lite-preview` | Fast initial text structuring |
+| `gemini-2.5-flash-image` | Per-nugget contextual image generation |
+
+All three use the same Google AI API key.
 
 ---
 
-## Security Notes
+## Security
 
-- API key is stored in `chrome.storage.sync` (synced across signed-in Chrome profiles)
-- All Gemini API calls are proxied through `background.js` — the key is never exposed to page-level content scripts
-- Image panel and char spans are built via DOM methods (`createElement` / `textContent`) — no `innerHTML` interpolation of API-supplied content
-- Image URLs from the API are validated against `http:`/`https:` protocol before being set as `img.src`
-- Async image callbacks capture nugget index at request time (`capturedIndex`) to prevent race conditions during navigation
-- Page stats scan uses `chrome.scripting.executeScript` with an inline function — no string eval, no external code injection
+- API key stored in `chrome.storage.sync` — never exposed to page-level scripts
+- All API calls proxied through `background.js` service worker
+- Image panel and char spans built via `createElement` / `textContent` — no `innerHTML` on API content
+- Image URLs validated with `isValidHttpUrl()` before assignment to `img.src`
+- Page stats scan uses inline `func:` in `executeScript` — no `eval`, no string injection
+- Async image callbacks capture `capturedIndex` at request time to prevent stale-closure race conditions
 
 ---
 
 ## Development
 
-See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the full phase-by-phase build history.
+See [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) for the full phase-by-phase build log and agentic tweaks roadmap.
