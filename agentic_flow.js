@@ -277,11 +277,24 @@ async function callAgent(allMessages, geminiApiKey, modelId) {
             generationConfig: { response_mime_type: 'application/json' },
         }),
     });
-    if (!res.ok) throw new Error(`Agent API ${res.status}`);
+    if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const errDetail = errBody.error?.message || res.statusText;
+        console.error(`[agent] callAgent ${modelId} HTTP ${res.status}:`, errDetail, errBody);
+        throw new Error(`Agent API ${res.status}: ${errDetail}`);
+    }
     const data = await res.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!raw) throw new Error('Empty response');
-    return JSON.parse(raw);
+    if (!raw) {
+        console.error(`[agent] callAgent ${modelId}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
+        throw new Error('Empty response');
+    }
+    try {
+        return JSON.parse(raw);
+    } catch (parseErr) {
+        console.error(`[agent] callAgent ${modelId}: JSON.parse failed:`, parseErr.message, '| raw:', raw.slice(0, 300));
+        throw new Error(`Agent JSON parse failed: ${parseErr.message}`);
+    }
 }
 
 // ── Result summarizer ────────────────────────────────────────────────────────
@@ -545,21 +558,32 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
                 }),
             });
             if (!res.ok) {
-                const errText = await res.text().catch(() => res.status);
-                console.warn(`[agent] chunking ${model.label} HTTP ${res.status}:`, errText);
+                const errBody = await res.json().catch(() => ({}));
+                const errDetail = errBody.error?.message || res.statusText;
+                console.error(`[agent] chunking ${model.label} HTTP ${res.status}:`, errDetail, errBody);
                 agentBroadcast(tabId, '[Agent] Chunking failed', model.label,
-                    `HTTP ${res.status} — rotating model`);
+                    `HTTP ${res.status}: ${errDetail} — rotating model`);
                 continue;
             }
             const data = await res.json();
             const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!jsonText) {
+                console.warn(`[agent] chunking ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
                 agentBroadcast(tabId, '[Agent] Chunking empty', model.label,
                     'no content in response — rotating model');
                 continue;
             }
-            const chunks = JSON.parse(jsonText).chunks || null;
+            let chunks;
+            try {
+                chunks = JSON.parse(jsonText).chunks || null;
+            } catch (parseErr) {
+                console.error(`[agent] chunking ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 300));
+                agentBroadcast(tabId, '[Agent] Chunking parse error', model.label,
+                    `JSON parse failed — rotating model`);
+                continue;
+            }
             if (!chunks?.length) {
+                console.warn(`[agent] chunking ${model.label}: parsed 0 chunks. jsonText:`, jsonText.slice(0, 300));
                 agentBroadcast(tabId, '[Agent] Chunking invalid', model.label,
                     'parsed 0 chunks — rotating model');
                 continue;

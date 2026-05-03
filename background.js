@@ -11,12 +11,10 @@ const MODEL_POOL = [
     { id: 'gemma-4-31b-it',             label: 'Gemma 4 31B',      vision: true  },
 ];
 
-// Agent model pool — randomly rotated per LLM call for agentic tools & ReAct loop
+// Agent model pool — Gemma-only, randomly rotated per LLM call for agentic tools & ReAct loop
 const AGENT_MODEL_POOL = [
-    { id: 'gemini-3.1-flash-lite-preview',  label: 'Flash Lite' },
-    { id: 'gemini-3-flash-preview',          label: 'Flash 3' },
-    { id: 'gemma-4-26b-a4b-it',             label: 'Gemma 4 26B' },
-    { id: 'gemma-4-31b-it',             label: 'Gemma 4 31B' },
+    { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B' },
+    { id: 'gemma-4-31b-it',     label: 'Gemma 4 31B' },
 ];
 
 function pickAgentModel() {
@@ -27,6 +25,7 @@ function pickAgentModel() {
 function arrayBufferToBase64(buf) {
     const bytes = new Uint8Array(buf);
     const CHUNK = 8192;
+    console.log(`[typingflow] arrayBufferToBase64: ${bytes.length} bytes → ${Math.ceil(bytes.length / CHUNK)} chunks`);
     let bin = '';
     for (let i = 0; i < bytes.length; i += CHUNK) {
         bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
@@ -85,13 +84,24 @@ async function callGeminiWithModel(payload, modelId) {
         });
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            return { error: `${modelId} error (${response.status}): ${err.error?.message || response.statusText}` };
+            const msg = `${modelId} error (${response.status}): ${err.error?.message || response.statusText}`;
+            console.error(`[typingflow] callGeminiWithModel HTTP ${response.status}:`, msg, err);
+            return { error: msg };
         }
         const data = await response.json();
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!jsonText) return { error: `${modelId} returned empty response.` };
-        return { success: true, api_response: JSON.parse(jsonText) };
+        if (!jsonText) {
+            console.warn(`[typingflow] callGeminiWithModel ${modelId}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
+            return { error: `${modelId} returned empty response.` };
+        }
+        try {
+            return { success: true, api_response: JSON.parse(jsonText) };
+        } catch (parseErr) {
+            console.error(`[typingflow] callGeminiWithModel ${modelId}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 300));
+            return { error: `${modelId} JSON parse failed: ${parseErr.message}` };
+        }
     } catch (e) {
+        console.error(`[typingflow] callGeminiWithModel ${modelId} threw:`, e.message);
         return { error: `${modelId} request failed: ${e.message}` };
     }
 }
@@ -123,6 +133,7 @@ async function callGemmaAPI(payload) {
     );
     for (const r of imageResults) {
         if (r.status === 'fulfilled') parts.push({ inlineData: r.value });
+        else console.warn(`[typingflow] callGemmaAPI: image fetch failed:`, r.reason?.message);
     }
 
     try {
@@ -137,14 +148,25 @@ async function callGemmaAPI(payload) {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            return { error: `Gemma API Error (${response.status}): ${errorData.error?.message || response.statusText}` };
+            const msg = `Gemma API Error (${response.status}): ${errorData.error?.message || response.statusText}`;
+            console.error(`[typingflow] callGemmaAPI HTTP ${response.status}:`, msg, errorData);
+            return { error: msg };
         }
 
         const data = await response.json();
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!jsonText) return { error: "Gemma returned an empty response." };
-        return { success: true, api_response: JSON.parse(jsonText) };
+        if (!jsonText) {
+            console.warn(`[typingflow] callGemmaAPI: empty response. Full:`, JSON.stringify(data).slice(0, 400));
+            return { error: "Gemma returned an empty response." };
+        }
+        try {
+            return { success: true, api_response: JSON.parse(jsonText) };
+        } catch (parseErr) {
+            console.error(`[typingflow] callGemmaAPI: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 300));
+            return { error: `Gemma JSON parse failed: ${parseErr.message}` };
+        }
     } catch (error) {
+        console.error(`[typingflow] callGemmaAPI threw:`, error.message);
         return { error: `Gemma request failed: ${error.message}` };
     }
 }

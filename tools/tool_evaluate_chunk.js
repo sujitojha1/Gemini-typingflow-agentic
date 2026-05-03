@@ -4,8 +4,8 @@ async function toolEvaluateChunk({ text }) {
         return { score: 0, clarity: 0, completeness: 0, critique: 'No API key', suggestions: '', error: true };
     }
 
-    const modelId = pickAgentModel().id;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+    const model = pickAgentModel();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Evaluate the following learning content chunk for quality. Return ONLY valid JSON matching the schema exactly.
 
@@ -23,11 +23,26 @@ Schema: {"score":<integer 1-5>,"clarity":<integer 1-5>,"completeness":<integer 1
                 generationConfig: { response_mime_type: 'application/json' }
             })
         });
-        if (!res.ok) return { score: 0, critique: `API error ${res.status}`, error: true };
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            const errDetail = errBody.error?.message || res.statusText;
+            console.warn(`[agent] toolEvaluateChunk ${model.label} HTTP ${res.status}:`, errDetail, errBody);
+            return { score: 0, critique: `API error ${res.status}: ${errDetail}`, error: true };
+        }
         const data = await res.json();
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        return jsonText ? JSON.parse(jsonText) : { score: 0, critique: 'Empty response', error: true };
+        if (!jsonText) {
+            console.warn(`[agent] toolEvaluateChunk ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
+            return { score: 0, critique: 'Empty response', error: true };
+        }
+        try {
+            return JSON.parse(jsonText);
+        } catch (parseErr) {
+            console.error(`[agent] toolEvaluateChunk ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
+            return { score: 0, critique: `Parse failed: ${parseErr.message}`, error: true };
+        }
     } catch (e) {
+        console.error(`[agent] toolEvaluateChunk ${model.label} threw:`, e.message);
         return { score: 0, critique: e.message, error: true };
     }
 }

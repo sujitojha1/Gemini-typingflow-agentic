@@ -2,8 +2,8 @@ async function toolExtractSubject({ text }) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return { subject: 'Untitled' };
 
-    const modelId = pickAgentModel().id;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+    const model = pickAgentModel();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Extract a concise subject title (4–8 words) for this learning chunk. Return ONLY valid JSON: {"subject":"<title>"}
 
@@ -19,12 +19,26 @@ ${text.slice(0, 600)}`;
                 generationConfig: { response_mime_type: 'application/json' }
             })
         });
-        if (!res.ok) return { subject: 'Untitled' };
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            const errDetail = errBody.error?.message || res.statusText;
+            console.warn(`[agent] toolExtractSubject ${model.label} HTTP ${res.status}:`, errDetail, errBody);
+            return { subject: 'Untitled' };
+        }
         const data = await res.json();
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!jsonText) return { subject: 'Untitled' };
-        return { subject: JSON.parse(jsonText).subject || 'Untitled' };
+        if (!jsonText) {
+            console.warn(`[agent] toolExtractSubject ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
+            return { subject: 'Untitled' };
+        }
+        try {
+            return { subject: JSON.parse(jsonText).subject || 'Untitled' };
+        } catch (parseErr) {
+            console.error(`[agent] toolExtractSubject ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
+            return { subject: 'Untitled' };
+        }
     } catch (e) {
+        console.error(`[agent] toolExtractSubject ${model.label} threw:`, e.message);
         return { subject: 'Untitled' };
     }
 }

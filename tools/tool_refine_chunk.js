@@ -2,8 +2,8 @@ async function toolRefineChunk({ text, grammar, evaluation }) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return { refinedText: text, error: 'No API key' };
 
-    const modelId = pickAgentModel().id;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
+    const model = pickAgentModel();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
 
     const prompt = `Refine the following learning content chunk. Fix the grammar issues identified, and preserve the author's voice and all original facts. Keep the refined text STRICTLY UNDER 300 words. Return ONLY valid JSON.
 
@@ -29,16 +29,30 @@ Schema: {"refinedText":"<the improved content, preserving author voice, max 300 
                 generationConfig: { response_mime_type: 'application/json' }
             })
         });
-        if (!res.ok) return { refinedText: text, error: `API error ${res.status}` };
+        if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            const errDetail = errBody.error?.message || res.statusText;
+            console.warn(`[agent] toolRefineChunk ${model.label} HTTP ${res.status}:`, errDetail, errBody);
+            return { refinedText: text, error: `API error ${res.status}: ${errDetail}` };
+        }
         const data = await res.json();
         const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!jsonText) return { refinedText: text, error: 'Empty response' };
-        const parsed = JSON.parse(jsonText);
-        let refined = parsed.refinedText || text;
-        const words = refined.split(/\s+/);
-        if (words.length > 300) refined = words.slice(0, 300).join(' ') + '…';
-        return { refinedText: refined };
+        if (!jsonText) {
+            console.warn(`[agent] toolRefineChunk ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
+            return { refinedText: text, error: 'Empty response' };
+        }
+        try {
+            const parsed = JSON.parse(jsonText);
+            let refined = parsed.refinedText || text;
+            const words = refined.split(/\s+/);
+            if (words.length > 300) refined = words.slice(0, 300).join(' ') + '…';
+            return { refinedText: refined };
+        } catch (parseErr) {
+            console.error(`[agent] toolRefineChunk ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
+            return { refinedText: text, error: `Parse failed: ${parseErr.message}` };
+        }
     } catch (e) {
+        console.error(`[agent] toolRefineChunk ${model.label} threw:`, e.message);
         return { refinedText: text, error: e.message };
     }
 }
