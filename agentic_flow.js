@@ -1,20 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// agentic_flow.js — LLM-driven ReAct Agent Loop
+// agentic_flow.js — LLM-driven ReAct Agent Loop (optimized)
 //
 // Architecture:
-//   1. A large system prompt defines the agent's role, available tools, and
-//      the expected multi-step plan.
-//   2. The agent generates a JSON response: { thought, tool, args }
-//   3. The runtime executes the requested tool with the provided args.
-//   4. The tool result is appended to the conversation history.
-//   5. The LLM is called again with the accumulated history to decide the
-//      next step.
-//   6. This loops until the agent emits { tool: "DONE" }.
+//   1. System prompt defines tools, plan, and chunk data.
+//   2. LLM generates: { thought, tool, args, nextStep }
+//   3. Runtime executes tool, feeds result back.
+//   4. Conversation history is kept trim (sliding window).
+//   5. Loops until LLM emits { tool: "DONE" }.
 //
-// Depends on: background.js globals (MODEL_POOL, GEMMA_MODEL,
-//             callGeminiWithModel, callGemmaAPI, generateContextualImage,
-//             isValidHttpUrl)
-// Depends on: tools/tool_*.js (loaded before this via importScripts)
+// Performance notes:
+//   - No artificial setTimeout waits anywhere.
+//   - Conversation window slides: only last N turns kept in context.
+//   - Result summaries aggressively truncated for LLM context.
+//   - Every step timed (ms) for log viewer diagnostics.
+//
+// Depends on: background.js globals, tools/tool_*.js
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ async function extractFromTab(tabId) {
             else resolve(r);
         });
     });
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 200));
     const resp = await tabMessage(tabId, { action: 'extract_content' });
     return resp?.payload || null;
 }
@@ -58,12 +58,13 @@ function preview(str, words = 8) {
     if (str == null) return '';
     const s = String(str).trim().replace(/\s+/g, ' ');
     const ws = s.split(' ');
-    return ws.length <= words ? s : ws.slice(0, words).join(' ') + ' ...';
+    return ws.length <= words ? s : ws.slice(0, words).join(' ') + '…';
 }
 
-// ── Agent Pipeline (Track 1 — fast gallery) ─────────────────────────────────
+// ── Agent Pipeline (Track 1 — fast gallery, no artificial delays) ────────────
 
 async function runAgentPipeline(tabId) {
+    const t0 = Date.now();
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) {
         agentBroadcast(tabId, 'error', null, 'API key not configured');
@@ -72,38 +73,40 @@ async function runAgentPipeline(tabId) {
 
     agentBroadcast(tabId, '[1/4] Session init', '—');
     const sessionId = 'session_' + Date.now();
-    await new Promise(r => setTimeout(r, 600));
 
-    agentBroadcast(tabId, '[2/4] Extracting content', '—', `in: tab ${tabId}`);
+    agentBroadcast(tabId, '[2/4] Extracting content', '—', `tab ${tabId}`);
     let payload;
     try {
         payload = await extractFromTab(tabId);
     } catch (e) {
-        agentBroadcast(tabId, 'error', null, 'injection blocked by Chrome');
+        agentBroadcast(tabId, 'error', null, 'injection blocked');
         return;
     }
     if (!payload?.length) {
-        agentBroadcast(tabId, 'error', null, 'no extractable content');
+        agentBroadcast(tabId, 'error', null, 'no content');
         return;
     }
 
-    agentBroadcast(tabId, '[2/4] Content extracted', '—',
-        `out: ${payload.length} blocks | "${preview(payload.find(p => p.type === 'text')?.content)}"`);
+    agentBroadcast(tabId, '[2/4] Extracted', '—',
+        `${payload.length} blocks in ${Date.now() - t0}ms`);
 
     await chrome.storage.local.set({ [`tf_agent_payload_${sessionId}`]: payload, tf_agent_tab: tabId });
-    await new Promise(r => setTimeout(r, 600));
 
     let structureResult = null;
     let usedModel = null;
     for (const model of MODEL_POOL) {
-        agentBroadcast(tabId, '[3/4] Structuring', model.label, `in: ${payload.length} blocks`);
+        const ts = Date.now();
+        agentBroadcast(tabId, '[3/4] Structuring', model.label);
         try {
             const result = await callModelForStructuring(payload, model);
-            if (result.success) { structureResult = result; usedModel = model; break; }
-            agentBroadcast(tabId, `[3/4] ${model.label} failed`, model.label, preview(result.error));
+            if (result.success) {
+                structureResult = result;
+                usedModel = model;
+                agentBroadcast(tabId, '[3/4] Structured', model.label, `${Date.now() - ts}ms`);
+                break;
+            }
             console.warn(`[agent] ${model.label} failed:`, result.error);
         } catch (e) {
-            agentBroadcast(tabId, `[3/4] ${model.label} threw`, model.label, preview(e.message));
             console.warn(`[agent] ${model.label} threw:`, e.message);
         }
     }
@@ -113,10 +116,8 @@ async function runAgentPipeline(tabId) {
     }
 
     const nuggets = structureResult.api_response.nuggets || [];
-    agentBroadcast(tabId, '[3/4] Structured', usedModel.label,
-        `out: ${nuggets.length} nuggets | "${preview(structureResult.api_response.tldr)}"`);
 
-    agentBroadcast(tabId, '[4/4] Mounting gallery', usedModel.label, `${nuggets.length} nuggets`);
+    agentBroadcast(tabId, '[4/4] Mounting', usedModel.label, `${nuggets.length} nuggets`);
     await tabMessage(tabId, { action: 'mount_ui', data: structureResult.api_response }).catch(() => {});
     chrome.tabs.sendMessage(tabId, { action: 'open_overlay' }, () => { chrome.runtime.lastError; });
     chrome.runtime.sendMessage({ action: 'agent_close_popup' }, () => { chrome.runtime.lastError; });
@@ -134,7 +135,7 @@ async function runAgentPipeline(tabId) {
     });
 
     agentBroadcast(tabId, 'Done [1-4]', usedModel.label,
-        `${nuggets.length} nuggets | "${preview(structureResult.api_response.tldr)}"`);
+        `${nuggets.length} nuggets | ${Date.now() - t0}ms total`);
 
     if (usedModel.id !== GEMMA_MODEL) {
         runAgenticLoop(tabId, payload);
@@ -143,11 +144,12 @@ async function runAgentPipeline(tabId) {
 
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Track 2 — LLM-Driven ReAct Agent Loop
+// Track 2 — LLM-Driven ReAct Agent Loop (optimized)
 // ═════════════════════════════════════════════════════════════════════════════
 
 const AGENT_MODEL = 'gemini-3.1-flash-lite-preview';
-const MAX_TURNS = 80;   // safety cap
+const MAX_TURNS = 80;
+const CONTEXT_WINDOW = 12;  // keep only last N message pairs in context
 
 // ── System prompt ────────────────────────────────────────────────────────────
 
@@ -157,52 +159,52 @@ You have ${chunks.length} semantic content chunks to process.
 There are ${imageIndex.length} images available by index.
 
 ## YOUR GOAL
-Process every chunk through a quality pipeline: filter ads, resolve images,
-compute statistics, evaluate quality, check grammar, conditionally refine,
-and track coverage. Then finish.
+Process every chunk through a quality pipeline, then finish.
 
-## AVAILABLE TOOLS
-Call exactly ONE tool per turn. Return JSON: { "thought": "...", "tool": "<NAME>", "args": { ... } }
+## RESPONSE FORMAT
+Return JSON every turn:
+{ "thought": "<brief reasoning>", "tool": "<NAME>", "args": { ... }, "nextStep": "<what you will do next>" }
+
+## AVAILABLE TOOLS (call exactly ONE per turn)
 
 | Tool               | Args                                                      | Returns                            |
 |---------------------|-----------------------------------------------------------|------------------------------------|
-| checkRelevance      | { "text": "..." }                                        | { isAd, reason }                   |
+| checkRelevance      | { "chunkIdx": N, "text": "..." }                        | { isAd, reason }                   |
 | findMatchingImage   | { "chunkIdx": N, "nearbyImageIdx": N }                   | { matched, src }                   |
-| generateChunkImage  | { "text": "...", "tags": [...] }                         | { img_src }                        |
-| getChunkStats       | { "text": "..." }                                        | { wordCount, charCount, ... }      |
-| extractSubject      | { "text": "..." }                                        | { subject }                        |
-| evaluateChunk       | { "text": "..." }                                        | { score, clarity, critique, ... }  |
-| checkGrammar        | { "text": "..." }                                        | { isProper, issues }               |
-| refineChunk         | { "text": "...", "grammar": {...}, "evaluation": {...} } | { refinedText }                    |
-| updateCoverage      | { "chunkIdx": N, "totalChunks": N }                      | { coverage, processed, total }     |
-| DONE                | {}                                                        | (terminates the loop)              |
+| generateChunkImage  | { "chunkIdx": N, "text": "...", "tags": [...] }          | { img_src }                        |
+| getChunkStats       | { "chunkIdx": N, "text": "..." }                        | { wordCount, charCount, ... }      |
+| extractSubject      | { "chunkIdx": N, "text": "..." }                        | { subject }                        |
+| evaluateChunk       | { "chunkIdx": N, "text": "..." }                        | { score, clarity, critique, ... }  |
+| checkGrammar        | { "chunkIdx": N, "text": "..." }                        | { isProper, issues }               |
+| refineChunk         | { "chunkIdx": N, "text": "...", "grammar": {...}, "evaluation": {...} } | { refinedText }    |
+| updateCoverage      | { "chunkIdx": N, "totalChunks": N }                     | { coverage, processed, total }     |
+| DONE                | {}                                                        | (terminates)                       |
 
-## PLAN — follow this order for EACH chunk (0/${chunks.length}, 1/${chunks.length}, ...):
-  Step A: checkRelevance — if isAd=true, skip to updateCoverage for this chunk.
-  Step B: findMatchingImage (if nearbyImageIdx exists) OR generateChunkImage.
-  Step C: getChunkStats.
-  Step D: extractSubject.
-  Step E: evaluateChunk.
-  Step F: checkGrammar.
-  Step G: if grammar isProper=false → refineChunk; else skip refinement.
-  Step H: updateCoverage for this chunk.
-  Then move to the next chunk (e.g. 1/${chunks.length}).
+## PLAN — for EACH chunk (0/${chunks.length}, 1/${chunks.length}, ...):
+  A: checkRelevance — if isAd=true, skip to H.
+  B: findMatchingImage (if nearbyImageIdx exists) OR generateChunkImage.
+  C: getChunkStats.
+  D: extractSubject.
+  E: evaluateChunk.
+  F: checkGrammar.
+  G: if isProper=false → refineChunk; else skip.
+  H: updateCoverage.
+  Move to next chunk.
 
-After ALL chunks are done, call DONE.
+After ALL chunks → call DONE.
 
-## CHUNKS DATA
+## CHUNKS
 ${JSON.stringify(chunks.map((c, i) => ({
-    idx: i,
-    ref: `${i}/${chunks.length}`,
-    text: c.text.slice(0, 400),
+    i,
+    text: c.text.slice(0, 300),
     tags: c.tags,
     nearbyImageIdx: c.nearbyImageIdx,
 })))}
 
-## IMAGE INDEX
+## IMAGES
 ${JSON.stringify(imageIndex.map(img => ({ idx: img.idx })))}
 
-Begin with chunk 0/${chunks.length}, Step A.`;
+Start: chunk 0/${chunks.length}, Step A.`;
 }
 
 // ── Tool dispatcher ──────────────────────────────────────────────────────────
@@ -211,50 +213,49 @@ async function executeTool(toolName, args, imageIndex) {
     switch (toolName) {
         case 'checkRelevance':
             return await toolCheckRelevance({ text: args.text });
-
         case 'findMatchingImage': {
             const img = imageIndex[args.nearbyImageIdx];
-            if (img) return { matched: true, src: img.src };
-            return { matched: false, src: null };
+            return img ? { matched: true, src: img.src } : { matched: false, src: null };
         }
-
         case 'generateChunkImage':
             return await generateContextualImage({ text: args.text, tags: args.tags || [] });
-
         case 'getChunkStats':
             return toolGetChunkStats({ text: args.text });
-
         case 'extractSubject':
             return await toolExtractSubject({ text: args.text });
-
         case 'evaluateChunk':
             return await toolEvaluateChunk({ text: args.text });
-
         case 'checkGrammar':
             return await toolCheckGrammar({ text: args.text });
-
         case 'refineChunk':
             return await toolRefineChunk({
                 text: args.text,
                 grammar: args.grammar || null,
                 evaluation: args.evaluation || null,
             });
-
         case 'updateCoverage':
             return await toolUpdateCoverage({
                 chunkIdx: args.chunkIdx,
                 totalChunks: args.totalChunks,
             });
-
         default:
             return { error: `Unknown tool: ${toolName}` };
     }
 }
 
-// ── LLM caller for the agent loop ────────────────────────────────────────────
+// ── LLM caller (uses sliding context window) ─────────────────────────────────
 
-async function callAgent(messages, geminiApiKey) {
+async function callAgent(allMessages, geminiApiKey) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${AGENT_MODEL}:generateContent?key=${geminiApiKey}`;
+
+    // Sliding window: always keep the first message (system prompt) + last N
+    let messages;
+    if (allMessages.length > CONTEXT_WINDOW + 1) {
+        const trimNote = { role: 'user', text: `[Context trimmed. ${allMessages.length - CONTEXT_WINDOW - 1} earlier turns omitted. Continue from where you left off.]` };
+        messages = [allMessages[0], trimNote, ...allMessages.slice(-CONTEXT_WINDOW)];
+    } else {
+        messages = allMessages;
+    }
 
     const contents = messages.map(m => ({
         role: m.role,
@@ -269,11 +270,24 @@ async function callAgent(messages, geminiApiKey) {
             generationConfig: { response_mime_type: 'application/json' },
         }),
     });
-    if (!res.ok) throw new Error(`Agent API error ${res.status}`);
+    if (!res.ok) throw new Error(`Agent API ${res.status}`);
     const data = await res.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!raw) throw new Error('Agent returned empty response');
+    if (!raw) throw new Error('Empty response');
     return JSON.parse(raw);
+}
+
+// ── Result summarizer ────────────────────────────────────────────────────────
+
+function summarizeResult(tool, result) {
+    if (!result || typeof result !== 'object') return result;
+    const copy = { ...result };
+    // Aggressively truncate to keep context small
+    if (copy.src && copy.src.length > 40) copy.src = copy.src.slice(0, 40) + '…';
+    if (copy.img_src && copy.img_src.length > 40) copy.img_src = copy.img_src.slice(0, 40) + '…';
+    if (copy.refinedText && copy.refinedText.length > 150)
+        copy.refinedText = copy.refinedText.slice(0, 150) + '…';
+    return copy;
 }
 
 // ── The main ReAct loop ──────────────────────────────────────────────────────
@@ -282,15 +296,14 @@ async function runAgenticLoop(tabId, payload) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return;
 
-    agentBroadcast(tabId, '[Agent] Initializing', AGENT_MODEL);
+    const loopStart = Date.now();
+    agentBroadcast(tabId, '[Agent] Init', AGENT_MODEL);
 
-    // ── Phase 1: Index content ───────────────────────────────────────────────
+    // Phase 1: Index
     const sessionId = 'session_' + Date.now();
-
     const imageIndex = payload
         .filter(p => p.type === 'image' && isValidHttpUrl(p.src))
         .map((img, idx) => ({ idx, src: img.src }));
-
     const textBlocks = payload
         .filter(p => p.type === 'text' && p.content?.trim())
         .map((b, idx) => ({ idx, text: b.content }));
@@ -300,64 +313,78 @@ async function runAgenticLoop(tabId, payload) {
         [`tf_pt_${sessionId}_texts`]: textBlocks,
         tf_pt_coverage: [],
     });
+    agentBroadcast(tabId, '[Agent] Indexed', AGENT_MODEL,
+        `${textBlocks.length} text | ${imageIndex.length} img`);
 
-    agentBroadcast(tabId, '[Agent] Content indexed', AGENT_MODEL,
-        `${textBlocks.length} text | ${imageIndex.length} images`);
-
-    // ── Phase 2: Identify semantic chunks ────────────────────────────────────
-    agentBroadcast(tabId, '[Agent] Identifying chunks', AGENT_MODEL);
+    // Phase 2: Chunk identification
+    const chunkStart = Date.now();
+    agentBroadcast(tabId, '[Agent] Chunking', AGENT_MODEL);
     let chunks = await identifySemanticChunks(textBlocks, imageIndex, geminiApiKey);
     if (!chunks?.length) {
         chunks = textBlocks.map(b => ({ text: b.text, tags: [], blockIndices: [b.idx], nearbyImageIdx: null }));
     }
-    agentBroadcast(tabId, '[Agent] Chunks ready', AGENT_MODEL, `${chunks.length} chunks`);
+    agentBroadcast(tabId, '[Agent] Chunks ready', AGENT_MODEL,
+        `${chunks.length} chunks | ${Date.now() - chunkStart}ms`);
 
-    // ── Phase 3: ReAct agent loop ────────────────────────────────────────────
+    // Phase 3: ReAct loop
     const systemPrompt = buildAgentSystemPrompt(chunks, imageIndex);
     const messages = [{ role: 'user', text: systemPrompt }];
-    const processHistory = [];     // per-chunk logs for the UI
-    const chunkState = {};         // accumulate results per chunk
+    const chunkState = {};
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
+        const turnStart = Date.now();
+
+        // ── Call LLM ─────────────────────────────────────────────────────────
         let action;
         try {
             action = await callAgent(messages, geminiApiKey);
         } catch (e) {
-            console.warn('[agent loop] LLM error:', e.message);
-            agentBroadcast(tabId, '[Agent] LLM error', AGENT_MODEL, preview(e.message));
+            console.warn('[agent] LLM error:', e.message);
+            agentBroadcast(tabId, '[Agent] LLM error', AGENT_MODEL, e.message);
             break;
         }
+        const llmMs = Date.now() - turnStart;
 
-        const { thought, tool, args } = action;
+        const { thought, tool, args, nextStep } = action;
 
-        // ── DONE signal ──────────────────────────────────────────────────────
+        // ── DONE ─────────────────────────────────────────────────────────────
         if (tool === 'DONE') {
-            agentBroadcast(tabId, '[Agent] All chunks processed', AGENT_MODEL, thought || '');
-            // Append the assistant turn and break
+            agentBroadcast(tabId, '[Agent] Complete', AGENT_MODEL,
+                `${turn} turns | ${Date.now() - loopStart}ms total`);
             messages.push({ role: 'model', text: JSON.stringify(action) });
             break;
         }
 
-        // ── Broadcast thought ────────────────────────────────────────────────
-        const chunkRef = args?.chunkIdx != null ? `[C${args.chunkIdx + 1}/${chunks.length}]` : '';
-        agentBroadcast(tabId, `${chunkRef} ${tool}`, AGENT_MODEL, preview(thought));
-
-        // ── Execute the tool ─────────────────────────────────────────────────
+        // ── Execute tool ─────────────────────────────────────────────────────
+        const toolStart = Date.now();
         let result;
         try {
             result = await executeTool(tool, args || {}, imageIndex);
         } catch (e) {
             result = { error: e.message };
         }
+        const toolMs = Date.now() - toolStart;
+        const totalMs = llmMs + toolMs;
 
-        // ── Build history entry ──────────────────────────────────────────────
-        const historyEntry = { tool, input: args || {}, result };
+        // ── Accumulate state ─────────────────────────────────────────────────
         const ci = args?.chunkIdx ?? null;
+        const chunkRef = ci != null ? `[C${ci + 1}/${chunks.length}]` : '';
+
+        const historyEntry = {
+            tool,
+            thought: thought || '',
+            nextStep: nextStep || '',
+            input: args || {},
+            result,
+            llmMs,
+            toolMs,
+            totalMs,
+        };
+
         if (ci != null) {
             if (!chunkState[ci]) chunkState[ci] = { steps: [], data: {} };
             chunkState[ci].steps.push(historyEntry);
 
-            // Accumulate useful data per chunk
             if (tool === 'findMatchingImage' && result.matched) chunkState[ci].data.imgSrc = result.src;
             if (tool === 'generateChunkImage') chunkState[ci].data.imgSrc = result.img_src;
             if (tool === 'getChunkStats') chunkState[ci].data.stats = result;
@@ -369,15 +396,18 @@ async function runAgenticLoop(tabId, payload) {
             if (tool === 'updateCoverage') chunkState[ci].data.coverage = result.coverage;
         }
 
-        // ── Feed result back to the LLM ──────────────────────────────────────
+        // ── Broadcast with timing ────────────────────────────────────────────
+        agentBroadcast(tabId, `${chunkRef} ${tool}`, AGENT_MODEL,
+            `${totalMs}ms (llm:${llmMs} tool:${toolMs}) | next: ${preview(nextStep, 6)}`);
+
+        // ── Feed back to LLM ─────────────────────────────────────────────────
         messages.push({ role: 'model', text: JSON.stringify(action) });
 
-        // Summarize result for the LLM (truncate large values like img_src)
         const resultSummary = summarizeResult(tool, result);
-        messages.push({ role: 'user', text: `Tool result for ${tool}:\n${JSON.stringify(resultSummary)}\n\nContinue with the next step.` });
-
-        agentBroadcast(tabId, `${chunkRef} ${tool} done`, AGENT_MODEL,
-            preview(JSON.stringify(resultSummary)));
+        messages.push({
+            role: 'user',
+            text: `Result[${tool}]: ${JSON.stringify(resultSummary)}\nContinue.`,
+        });
     }
 
     // ── Phase 4: Assemble and hand off ───────────────────────────────────────
@@ -404,7 +434,6 @@ async function runAgenticLoop(tabId, payload) {
     }
 
     const validResults = chunkResults.filter(r => !r.isAd);
-
     const refinedData = {
         nuggets: validResults.map(r => ({
             text: r.refinedText,
@@ -416,6 +445,7 @@ async function runAgenticLoop(tabId, payload) {
             coverage: r.coverage,
         })),
         sessionId,
+        totalMs: Date.now() - loopStart,
         processHistory: chunkResults.map(r => ({ chunkIdx: r.chunkIdx, steps: r.history || [] })),
     };
 
@@ -426,26 +456,11 @@ async function runAgenticLoop(tabId, payload) {
         () => { chrome.runtime.lastError; }
     );
 
-    agentBroadcast(tabId, '[Agent] Handoff complete', AGENT_MODEL,
-        `${validResults.length}/${chunkResults.length} valid chunks`);
+    agentBroadcast(tabId, '[Agent] Handoff', AGENT_MODEL,
+        `${validResults.length}/${chunkResults.length} valid | ${Date.now() - loopStart}ms`);
 }
 
-// ── Result summarizer (keeps LLM context clean) ─────────────────────────────
-
-function summarizeResult(tool, result) {
-    if (!result || typeof result !== 'object') return result;
-    const copy = { ...result };
-
-    // Truncate large fields to keep the prompt small
-    if (copy.src && copy.src.length > 60) copy.src = copy.src.slice(0, 60) + '...';
-    if (copy.img_src && copy.img_src.length > 60) copy.img_src = copy.img_src.slice(0, 60) + '...';
-    if (copy.refinedText && copy.refinedText.length > 300)
-        copy.refinedText = copy.refinedText.slice(0, 300) + '...';
-
-    return copy;
-}
-
-// ── Semantic chunk identification (unchanged) ────────────────────────────────
+// ── Semantic chunk identification ────────────────────────────────────────────
 
 async function identifySemanticChunks(textBlocks, imageIndex, geminiApiKey) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${AGENT_MODEL}:generateContent?key=${geminiApiKey}`;
@@ -470,7 +485,7 @@ Return ONLY valid JSON:
   ]
 }
 
-Rules: group related consecutive blocks; generate as many chunks as needed, but each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
+Rules: group related consecutive blocks; each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
 
     try {
         const res = await fetch(url, {
