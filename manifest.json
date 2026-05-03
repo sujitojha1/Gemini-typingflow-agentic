@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Gemini TypingFlow Context Engine",
+  "name": "Gemini TypingFlow Agentic",
   "version": "1.0.0",
   "description": "Transforms web articles into active recall typing sessions mapped with Hybrid Contextual Visuals using Gemini Flash Lite 3.1 Preview.",
   "background": {
