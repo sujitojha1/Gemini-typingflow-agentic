@@ -358,7 +358,7 @@ function renderNuggetGallery() {
 
         const imgBox = document.createElement('div');
         imgBox.className = 'tf-ncard-img';
-        if (nugget.img_src && isValidHttpUrl(nugget.img_src)) {
+        if (nugget.img_src && (isValidHttpUrl(nugget.img_src) || nugget.img_src.startsWith('data:'))) {
             const img = document.createElement('img');
             img.src = nugget.img_src;
             img.alt = '';
@@ -462,12 +462,13 @@ function renderCurrentNugget() {
 
     // Populate image panel after DOM is set, using captured index to avoid race condition
     const imagePanel = document.getElementById(`tf-image-panel-${capturedIndex}`);
-    if (hasImage && isValidHttpUrl(nugget.img_src)) {
+    const validSrc = nugget.img_src && (isValidHttpUrl(nugget.img_src) || nugget.img_src.startsWith('data:'));
+    if (validSrc) {
         const img = document.createElement('img');
         img.alt = 'Contextual Asset';
         img.src = nugget.img_src;
         imagePanel.appendChild(img);
-    } else if (!hasImage) {
+    } else {
         const loader = document.createElement('div');
         loader.className = 'tf-nano-loader';
         loader.id = `tf-nano-${capturedIndex}`;
@@ -478,7 +479,6 @@ function renderCurrentNugget() {
             action: "generate_image_asset",
             payload: { text: nugget.text, tags: sessionData.tags }
         }, (resp) => {
-            console.log("[typingflow] Image response:", resp);
             const container = document.getElementById(`tf-nano-${capturedIndex}`);
             if (resp && resp.success && resp.img_src) {
                 sessionData.nuggets[capturedIndex].img_src = resp.img_src;
@@ -487,12 +487,10 @@ function renderCurrentNugget() {
                     img.alt = 'Contextual Asset';
                     img.src = resp.img_src;
                     img.style.animation = 'fade-in 0.5s ease-out';
-                    img.onerror = () => console.error('[typingflow] img.src load failed for:', resp.img_src.slice(0, 60));
                     container.replaceWith(img);
                 }
             } else if (container) {
                 container.textContent = '⬡ visual unavailable';
-                console.warn('[typingflow] Image gen failed:', resp?.error);
             }
         });
     }
