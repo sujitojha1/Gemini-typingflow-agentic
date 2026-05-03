@@ -99,23 +99,37 @@ function saveKey() {
 
 // ─── Field text ───────────────────────────────────────────────────────────────
 
+function extractPageText(tabId, callback) {
+  chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const el = document.querySelector('article') ||
+                 document.querySelector('main')    ||
+                 document.querySelector('[role="main"]') ||
+                 document.body;
+      return (el?.innerText || '').trim();
+    }
+  }, results => {
+    void chrome.runtime.lastError;
+    callback(results?.[0]?.result || '');
+  });
+}
+
 function requestFieldText() {
   chrome.tabs.query({active: true, currentWindow: true}, tabs => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FIELD_TEXT' }, resp => {
-        if (chrome.runtime.lastError) console.warn(chrome.runtime.lastError.message);
-        if (resp && resp.text) {
-          updateWordBadge(resp.text);
-          if (pendingTyping) startTypingWithText(resp.text);
-        } else if (pendingTyping) {
-          setTypingBtnError('Refresh page to type');
-          pendingTyping = false;
-        }
-      });
-    } else if (pendingTyping) {
-      setTypingBtnError('No active tab');
-      pendingTyping = false;
+    if (!tabs[0]) {
+      if (pendingTyping) { setTypingBtnError('No active tab'); pendingTyping = false; }
+      return;
     }
+    extractPageText(tabs[0].id, text => {
+      if (text) {
+        updateWordBadge(text);
+        if (pendingTyping) startTypingWithText(text);
+      } else if (pendingTyping) {
+        setTypingBtnError('No content found on page');
+        pendingTyping = false;
+      }
+    });
   });
 }
 
@@ -145,15 +159,14 @@ function runAgent() {
   $('run-btn').textContent = '⏳ Analysing…';
 
   chrome.tabs.query({active: true, currentWindow: true}, tabs => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_FIELD_TEXT' }, resp => {
-        void chrome.runtime.lastError; // suppress "Receiving end does not exist" warning
-        const text = resp && resp.text ? resp.text : '';
-        chrome.runtime.sendMessage({ type: 'RUN_AGENT', text, prompt });
-      });
-    } else {
+    if (!tabs[0]) {
       chrome.runtime.sendMessage({ type: 'RUN_AGENT', text: '', prompt });
+      return;
     }
+    extractPageText(tabs[0].id, text => {
+      updateWordBadge(text);
+      chrome.runtime.sendMessage({ type: 'RUN_AGENT', text, prompt });
+    });
   });
 }
 
