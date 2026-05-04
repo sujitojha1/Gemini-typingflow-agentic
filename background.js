@@ -12,10 +12,12 @@ const MODEL_POOL = [
     { id: 'gemma-4-31b-it',                 label: 'Gemma 4 31B',      vision: true  },
 ];
 
-// Agent model pool — Gemma-only, randomly rotated per LLM call for agentic tools & ReAct loop
+// Agent model pool — randomly rotated per LLM call for agentic tools & ReAct loop
 const AGENT_MODEL_POOL = [
     { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B' },
     { id: 'gemma-4-31b-it',     label: 'Gemma 4 31B' },
+    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini Flash Lite' },
+    { id: 'gemini-3-flash-preview',         label: 'Gemini 3 Flash'   },
 ];
 
 
