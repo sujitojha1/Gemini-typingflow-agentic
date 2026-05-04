@@ -1,6 +1,8 @@
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
 const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
+let imageQuotaExceeded = false;
+
 // Model pool for primary structuring — tried in order, rotates on failure
 const MODEL_POOL = [
     { id: 'gemini-3.1-flash-lite-preview',  label: 'Gemini Flash Lite', vision: false },
@@ -39,7 +41,6 @@ async function fetchWithTimeout(url, options, timeoutMs = 25000) {
 function arrayBufferToBase64(buf) {
     const bytes = new Uint8Array(buf);
     const CHUNK = 8192;
-    console.log(`[typingflow] arrayBufferToBase64: ${bytes.length} bytes → ${Math.ceil(bytes.length / CHUNK)} chunks`);
     let bin = '';
     for (let i = 0; i < bytes.length; i += CHUNK) {
         bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
@@ -200,7 +201,7 @@ async function callGemmaAPI(payload) {
 // ── Image Generation ─────────────────────────────────────────────────────────
 
 async function generateContextualImage({ text, tags }) {
-    console.log("[typingflow] Invoking image generation...");
+    if (imageQuotaExceeded) return { success: true, img_src: await fallbackDataUrl(tags) };
 
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
     if (!geminiApiKey) return { success: false, error: "API Key Missing" };
@@ -220,7 +221,12 @@ async function generateContextualImage({ text, tags }) {
 
         if (!response.ok) {
             const errBody = await response.json().catch(() => ({}));
-            console.warn(`[typingflow] Image API ${response.status}:`, errBody?.error?.message || response.statusText);
+            if (response.status === 429) {
+                imageQuotaExceeded = true;
+                console.warn(`[typingflow] Image quota exceeded — skipping image generation for this session`);
+            } else {
+                console.warn(`[typingflow] Image API ${response.status}:`, errBody?.error?.message || response.statusText);
+            }
             return { success: true, img_src: await fallbackDataUrl(tags) };
         }
 
