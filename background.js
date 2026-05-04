@@ -52,18 +52,12 @@ function isValidHttpUrl(str) {
     catch { return false; }
 }
 
-// gemma-3-* models reject response_mime_type:"application/json" with HTTP 400
-function supportsJsonMode(modelId) {
-    return !modelId.startsWith('gemma-3');
-}
-
 // Gemma 4 thinking models prepend an empty {"text":"","thought":true} part before the real response
 function pickResponseText(data) {
     const parts = data.candidates?.[0]?.content?.parts || [];
     return parts.find(p => p.text && !p.thought)?.text || null;
 }
 
-// Gemma 3 models (no JSON mode) often wrap their output in ```json fences — strip before parsing
 function stripMarkdownFences(text) {
     return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 }

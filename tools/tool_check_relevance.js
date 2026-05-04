@@ -20,7 +20,7 @@ Schema: {"isAd":<boolean>,"reason":"<one short sentence explaining why>"}`;
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                ...(supportsJsonMode(model.id) ? { generationConfig: { response_mime_type: 'application/json' } } : {}),
+                generationConfig: { response_mime_type: 'application/json' },
             })
         }, 20000);
         if (!res.ok) {
