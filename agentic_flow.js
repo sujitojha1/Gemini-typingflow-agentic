@@ -63,6 +63,9 @@ async function extractFromTab(tabId) {
 }
 
 function callModelForStructuring(payload, model) {
+    if (model.isOllama || ACTIVE_SETTINGS.provider === 'ollama') {
+        return callOllamaStructuring(payload);
+    }
     return model.vision ? callGemmaAPI(payload) : callGeminiWithModel(payload, model.id);
 }
 
@@ -85,8 +88,12 @@ function extractJsonFromText(text) {
 async function runAgentPipeline(tabId) {
     const t0 = Date.now();
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
-    if (!geminiApiKey) {
+    if (ACTIVE_SETTINGS.provider === 'google' && !geminiApiKey) {
         agentBroadcast(tabId, 'error', null, 'API key not configured');
+        return;
+    }
+    if (ACTIVE_SETTINGS.provider === 'ollama' && !ACTIVE_SETTINGS.ollamaModel) {
+        agentBroadcast(tabId, 'error', null, 'Ollama model not configured in Settings');
         return;
     }
 
@@ -269,6 +276,10 @@ async function executeTool(toolName, args, imageIndex) {
 // ── LLM caller (uses sliding context window) ─────────────────────────────────
 
 async function callAgent(allMessages, geminiApiKey, modelId) {
+    if (ACTIVE_SETTINGS.provider === 'ollama') {
+        return callOllamaAgent(allMessages);
+    }
+
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     // Sliding window: always keep the first message (system prompt) + last N
@@ -337,7 +348,7 @@ function summarizeResult(tool, result) {
 
 async function runAgenticLoop(tabId, payload, sessionId) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
-    if (!geminiApiKey) return;
+    if (ACTIVE_SETTINGS.provider === 'google' && !geminiApiKey) return;
 
     const loopStart = Date.now();
     const initModel = pickAgentModel();
@@ -561,6 +572,44 @@ Return ONLY valid JSON:
 
 Rules: group related consecutive blocks; each chunk MUST be strictly under 300 words; preserve original wording; assign nearbyImageIdx by position proximity.`;
 
+    // ── Ollama path ──────────────────────────────────────────────────────────
+    if (ACTIVE_SETTINGS.provider === 'ollama') {
+        const { ollamaUrl, ollamaModel } = ACTIVE_SETTINGS;
+        agentBroadcast(tabId, '[Agent] Chunking model', `Ollama (${ollamaModel})`,
+            `${textBlocks.length} blocks`);
+        try {
+            const res = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model:    ollamaModel,
+                    messages: [{ role: 'user', content: prompt }],
+                    format:   'json',
+                    stream:   false,
+                }),
+            }, 90000);
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                console.error(`[agent] Ollama chunking HTTP ${res.status}:`, errBody.error);
+                return null;
+            }
+            const data = await res.json();
+            const raw  = data.message?.content;
+            if (!raw) return null;
+            let parsed;
+            try { parsed = JSON.parse(raw); } catch {
+                const match = raw.match(/\{[\s\S]*\}/);
+                parsed = match ? JSON.parse(match[0]) : null;
+            }
+            const chunks = parsed?.chunks || null;
+            if (chunks?.length) return chunks;
+        } catch (e) {
+            console.error('[agent] Ollama chunking threw:', e.message);
+        }
+        return null;
+    }
+
+    // ── Google path ──────────────────────────────────────────────────────────
     const triedIds = new Set();
     const MAX_MODEL_RETRIES = AGENT_MODEL_POOL.length + 1;
 

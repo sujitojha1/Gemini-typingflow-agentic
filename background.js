@@ -3,26 +3,128 @@ const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
 let imageQuotaExceeded = false;
 
-// Model pool for primary structuring — tried in order, rotates on failure
-const MODEL_POOL = [
-    { id: 'gemini-3.1-flash-lite-preview',  label: 'Gemini Flash Lite', vision: false },
-    { id: 'gemini-3-flash-preview',          label: 'Gemini 3 Flash',   vision: false },
-    { id: 'gemini-2.5-flash-lite',           label: 'Gemini 2.5 Lite',  vision: false },
-    { id: 'gemma-4-26b-a4b-it',             label: 'Gemma 4 26B',      vision: true  },
-    { id: 'gemma-4-31b-it',                 label: 'Gemma 4 31B',      vision: true  },
+// ── Model definitions ────────────────────────────────────────────────────────
+
+const DEFAULT_GOOGLE_MODELS = [
+    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini Flash Lite 3.1', vision: false },
+    { id: 'gemini-3-flash-preview',        label: 'Gemini 3 Flash',        vision: false },
+    { id: 'gemini-2.5-flash-lite',         label: 'Gemini 2.5 Flash Lite', vision: false },
+    { id: 'gemma-4-26b-a4b-it',           label: 'Gemma 4 26B',           vision: true  },
+    { id: 'gemma-4-31b-it',               label: 'Gemma 4 31B',           vision: true  },
 ];
 
-// Agent model pool — randomly rotated per LLM call for agentic tools & ReAct loop
-const AGENT_MODEL_POOL = [
-    { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B' },
-    { id: 'gemma-4-31b-it',     label: 'Gemma 4 31B' },
-    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini Flash Lite' },
-    { id: 'gemini-3-flash-preview',         label: 'Gemini 3 Flash'   },
-];
+// Mutable pools — rebuilt by refreshActiveSettings() before each pipeline run
+let MODEL_POOL       = [...DEFAULT_GOOGLE_MODELS];
+let AGENT_MODEL_POOL = [...DEFAULT_GOOGLE_MODELS];
 
+// Active provider settings — read from storage, updated per run
+let ACTIVE_SETTINGS = {
+    provider:    'google',
+    ollamaUrl:   'http://localhost:11434',
+    ollamaModel: '',
+};
+
+async function refreshActiveSettings() {
+    const stored = await chrome.storage.sync.get(
+        ['modelProvider', 'enabledModelIds', 'customModelIds', 'ollamaBaseUrl', 'ollamaModel']
+    );
+
+    ACTIVE_SETTINGS.provider    = stored.modelProvider  || 'google';
+    ACTIVE_SETTINGS.ollamaUrl   = (stored.ollamaBaseUrl || 'http://localhost:11434').replace(/\/$/, '');
+    ACTIVE_SETTINGS.ollamaModel = stored.ollamaModel    || '';
+
+    if (ACTIVE_SETTINGS.provider === 'ollama') {
+        const label = `Ollama (${ACTIVE_SETTINGS.ollamaModel || 'unconfigured'})`;
+        const ollamaEntry = { id: 'ollama', label, vision: false, isOllama: true };
+        MODEL_POOL       = [ollamaEntry];
+        AGENT_MODEL_POOL = [ollamaEntry];
+    } else {
+        const customIds  = stored.customModelIds  || [];
+        const customMods = customIds.map(id => ({ id, label: id, vision: false }));
+        const allMods    = [...DEFAULT_GOOGLE_MODELS, ...customMods];
+
+        const enabledIds = stored.enabledModelIds;
+        const pool = (enabledIds && enabledIds.length > 0)
+            ? allMods.filter(m => enabledIds.includes(m.id))
+            : [...DEFAULT_GOOGLE_MODELS];
+
+        MODEL_POOL       = pool.length > 0 ? pool : [...DEFAULT_GOOGLE_MODELS];
+        AGENT_MODEL_POOL = MODEL_POOL;
+    }
+}
 
 function pickAgentModel() {
     return AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
+}
+
+// ── Ollama API ────────────────────────────────────────────────────────────────
+
+async function callOllamaStructuring(payload) {
+    const { ollamaUrl, ollamaModel } = ACTIVE_SETTINGS;
+    if (!ollamaModel) return { error: 'No Ollama model configured. Set it in Settings.' };
+
+    const fullPrompt = SYSTEM_PROMPT + '\n\nRAW SCRAPED CONTENT:\n' + JSON.stringify(payload);
+    try {
+        console.log(`[typingflow] callOllamaStructuring: model=${ollamaModel}`);
+        const response = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model:    ollamaModel,
+                messages: [{ role: 'user', content: fullPrompt }],
+                format:   'json',
+                stream:   false,
+            }),
+        }, 90000);
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            return { error: `Ollama error (${response.status}): ${err.error || response.statusText}` };
+        }
+        const data    = await response.json();
+        const content = data.message?.content;
+        if (!content) return { error: 'Ollama returned empty response.' };
+
+        try {
+            return { success: true, api_response: JSON.parse(content) };
+        } catch (e) {
+            const match = content.match(/\{[\s\S]*\}/);
+            if (match) {
+                try { return { success: true, api_response: JSON.parse(match[0]) }; } catch {}
+            }
+            return { error: `Ollama JSON parse failed: ${e.message}` };
+        }
+    } catch (e) {
+        return { error: `Ollama request failed: ${e.message}` };
+    }
+}
+
+async function callOllamaAgent(allMessages) {
+    const { ollamaUrl, ollamaModel } = ACTIVE_SETTINGS;
+    const messages = allMessages.map(m => ({
+        role:    m.role === 'model' ? 'assistant' : m.role,
+        content: m.text,
+    }));
+
+    const res = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: ollamaModel, messages, format: 'json', stream: false }),
+    }, 30000);
+
+    if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(`Ollama agent ${res.status}: ${errBody.error || res.statusText}`);
+    }
+    const data = await res.json();
+    const raw  = data.message?.content;
+    if (!raw) throw new Error('Ollama agent: empty response');
+
+    try { return JSON.parse(raw); } catch (e) {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) { try { return JSON.parse(match[0]); } catch {} }
+        throw new Error(`Ollama agent JSON parse failed: ${e.message}`);
+    }
 }
 
 // Shared fetch with AbortController timeout — prevents silent hangs in service-worker context
@@ -285,12 +387,21 @@ importScripts(
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "agent_start") {
-        runAgentPipeline(request.tabId);
+        (async () => {
+            await refreshActiveSettings();
+            runAgentPipeline(request.tabId);
+        })();
         sendResponse({ started: true });
         return true;
     }
     if (request.action === "proxy_gemini_api") {
         (async () => {
+            await refreshActiveSettings();
+            if (ACTIVE_SETTINGS.provider === 'ollama') {
+                const result = await callOllamaStructuring(request.payload);
+                sendResponse(result);
+                return;
+            }
             for (const model of MODEL_POOL) {
                 const result = await callGeminiWithModel(request.payload, model.id);
                 if (result.success) { sendResponse(result); return; }
