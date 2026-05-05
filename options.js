@@ -6,9 +6,13 @@ const DEFAULT_GOOGLE_MODELS = [
     { id: 'gemma-4-31b-it',               label: 'Gemma 4 31B',           vision: true  },
 ];
 
-// State
-let customModelIds = [];   // user-added model IDs (strings)
-let enabledModelIds = null; // null means "all defaults enabled"
+// Google model pool state
+let customModelIds = [];
+let enabledModelIds = null;
+
+// Ollama model pool state
+let ollamaModelIds = [];       // all model IDs in the pool
+let ollamaEnabledModelIds = null; // null = all enabled
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
@@ -21,7 +25,9 @@ const modelList     = document.getElementById('modelList');
 const customInput   = document.getElementById('customModelId');
 const addModelBtn   = document.getElementById('addModelBtn');
 const ollamaUrlIn   = document.getElementById('ollamaUrl');
-const ollamaModelIn = document.getElementById('ollamaModel');
+const ollamaModelList    = document.getElementById('ollamaModelList');
+const customOllamaInput  = document.getElementById('customOllamaModelId');
+const addOllamaModelBtn  = document.getElementById('addOllamaModelBtn');
 const testBtn       = document.getElementById('testOllamaBtn');
 const ollamaStatus  = document.getElementById('ollamaTestStatus');
 const saveBtn       = document.getElementById('saveBtn');
@@ -38,7 +44,7 @@ function applyProviderUI() {
 provGoogle.addEventListener('change', applyProviderUI);
 provOllama.addEventListener('change', applyProviderUI);
 
-// ── Model list rendering ──────────────────────────────────────────────────────
+// ── Google model list ─────────────────────────────────────────────────────────
 
 function buildModelRows() {
     modelList.innerHTML = '';
@@ -81,7 +87,7 @@ function buildModelRows() {
             rmBtn.textContent = '×';
             rmBtn.addEventListener('click', () => {
                 customModelIds = customModelIds.filter(id => id !== model.id);
-                syncEnabledFromUI();   // capture checked state before rebuild
+                syncEnabledFromUI();
                 buildModelRows();
             });
             row.appendChild(rmBtn);
@@ -98,23 +104,17 @@ function syncEnabledFromUI() {
         const cb = row.querySelector('input[type="checkbox"]');
         if (cb && cb.checked) ids.push(row.dataset.modelId);
     });
-    // If all defaults are enabled and no custom models, treat as "all" (null)
     const allDefaultIds = DEFAULT_GOOGLE_MODELS.map(m => m.id);
     const onlyDefaults = ids.every(id => allDefaultIds.includes(id));
     const allDefaultsOn = allDefaultIds.every(id => ids.includes(id));
     enabledModelIds = (onlyDefaults && allDefaultsOn && customModelIds.length === 0) ? null : ids;
 }
 
-// ── Add custom model ──────────────────────────────────────────────────────────
-
 addModelBtn.addEventListener('click', () => {
     const val = customInput.value.trim();
     if (!val) return;
     const allIds = [...DEFAULT_GOOGLE_MODELS.map(m => m.id), ...customModelIds];
-    if (allIds.includes(val)) {
-        customInput.value = '';
-        return;
-    }
+    if (allIds.includes(val)) { customInput.value = ''; return; }
     customModelIds.push(val);
     if (enabledModelIds !== null) enabledModelIds.push(val);
     customInput.value = '';
@@ -125,7 +125,77 @@ customInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') addModelBtn.click();
 });
 
-// ── Test Ollama ───────────────────────────────────────────────────────────────
+// ── Ollama model list ─────────────────────────────────────────────────────────
+
+function buildOllamaModelRows() {
+    ollamaModelList.innerHTML = '';
+
+    if (ollamaModelIds.length === 0) {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'font-size:12px;color:#4a4640;padding:8px 0;';
+        hint.textContent = 'No models added yet. Type a model name above and click + Add.';
+        ollamaModelList.appendChild(hint);
+        return;
+    }
+
+    for (const modelId of ollamaModelIds) {
+        const isEnabled = ollamaEnabledModelIds === null || ollamaEnabledModelIds.includes(modelId);
+        const row = document.createElement('div');
+        row.className = 'model-row';
+        row.dataset.modelId = modelId;
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = isEnabled;
+        cb.addEventListener('change', () => syncOllamaEnabledFromUI());
+
+        const info = document.createElement('div');
+        info.className = 'model-row-info';
+        info.innerHTML = `<div class="model-row-label">${modelId}</div>`;
+
+        const rmBtn = document.createElement('button');
+        rmBtn.className = 'model-remove-btn';
+        rmBtn.title = 'Remove';
+        rmBtn.textContent = '×';
+        rmBtn.addEventListener('click', () => {
+            ollamaModelIds = ollamaModelIds.filter(id => id !== modelId);
+            syncOllamaEnabledFromUI();
+            buildOllamaModelRows();
+        });
+
+        row.appendChild(cb);
+        row.appendChild(info);
+        row.appendChild(rmBtn);
+        ollamaModelList.appendChild(row);
+    }
+}
+
+function syncOllamaEnabledFromUI() {
+    const rows = ollamaModelList.querySelectorAll('.model-row');
+    const ids = [];
+    rows.forEach(row => {
+        const cb = row.querySelector('input[type="checkbox"]');
+        if (cb && cb.checked) ids.push(row.dataset.modelId);
+    });
+    const allOn = ollamaModelIds.every(id => ids.includes(id));
+    ollamaEnabledModelIds = allOn ? null : ids;
+}
+
+addOllamaModelBtn.addEventListener('click', () => {
+    const val = customOllamaInput.value.trim();
+    if (!val) return;
+    if (ollamaModelIds.includes(val)) { customOllamaInput.value = ''; return; }
+    ollamaModelIds.push(val);
+    if (ollamaEnabledModelIds !== null) ollamaEnabledModelIds.push(val);
+    customOllamaInput.value = '';
+    buildOllamaModelRows();
+});
+
+customOllamaInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') addOllamaModelBtn.click();
+});
+
+// ── Test Ollama connection ────────────────────────────────────────────────────
 
 testBtn.addEventListener('click', async () => {
     const url = (ollamaUrlIn.value.trim() || 'http://localhost:11434').replace(/\/$/, '');
@@ -147,9 +217,9 @@ testBtn.addEventListener('click', async () => {
 // ── Load settings ─────────────────────────────────────────────────────────────
 
 chrome.storage.sync.get(
-    ['modelProvider', 'geminiApiKey', 'enabledModelIds', 'customModelIds', 'ollamaBaseUrl', 'ollamaModel'],
+    ['modelProvider', 'geminiApiKey', 'enabledModelIds', 'customModelIds',
+     'ollamaBaseUrl', 'ollamaModels', 'ollamaEnabledModels', 'ollamaModel'],
     (result) => {
-        // Provider
         const provider = result.modelProvider || 'google';
         if (provider === 'ollama') {
             provOllama.checked = true;
@@ -158,17 +228,24 @@ chrome.storage.sync.get(
         }
         applyProviderUI();
 
-        // API key
         if (result.geminiApiKey) apiKeyInput.value = result.geminiApiKey;
 
-        // Model pool
         customModelIds = result.customModelIds || [];
         enabledModelIds = result.enabledModelIds || null;
         buildModelRows();
 
-        // Ollama
         ollamaUrlIn.value = result.ollamaBaseUrl || 'http://localhost:11434';
-        ollamaModelIn.value = result.ollamaModel || '';
+
+        // Migrate old single ollamaModel string to ollamaModels array
+        if (result.ollamaModels && result.ollamaModels.length > 0) {
+            ollamaModelIds = result.ollamaModels;
+        } else if (result.ollamaModel) {
+            ollamaModelIds = [result.ollamaModel];
+        } else {
+            ollamaModelIds = [];
+        }
+        ollamaEnabledModelIds = result.ollamaEnabledModels || null;
+        buildOllamaModelRows();
     }
 );
 
@@ -176,16 +253,20 @@ chrome.storage.sync.get(
 
 saveBtn.addEventListener('click', () => {
     syncEnabledFromUI();
+    syncOllamaEnabledFromUI();
 
     const provider = provGoogle.checked ? 'google' : 'ollama';
 
     chrome.storage.sync.set({
-        modelProvider:  provider,
-        geminiApiKey:   apiKeyInput.value.trim(),
-        enabledModelIds: enabledModelIds,
-        customModelIds:  customModelIds,
-        ollamaBaseUrl:  ollamaUrlIn.value.trim() || 'http://localhost:11434',
-        ollamaModel:    ollamaModelIn.value.trim(),
+        modelProvider:       provider,
+        geminiApiKey:        apiKeyInput.value.trim(),
+        enabledModelIds:     enabledModelIds,
+        customModelIds:      customModelIds,
+        ollamaBaseUrl:       ollamaUrlIn.value.trim() || 'http://localhost:11434',
+        ollamaModels:        ollamaModelIds,
+        ollamaEnabledModels: ollamaEnabledModelIds,
+        // keep legacy key in sync for any code that still reads it
+        ollamaModel:         ollamaModelIds[0] || '',
     }, () => {
         saveStatus.textContent = 'Settings saved.';
         setTimeout(() => { saveStatus.textContent = ''; }, 3000);

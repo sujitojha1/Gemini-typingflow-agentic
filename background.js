@@ -26,19 +26,37 @@ let ACTIVE_SETTINGS = {
 
 async function refreshActiveSettings() {
     const stored = await chrome.storage.sync.get(
-        ['modelProvider', 'enabledModelIds', 'customModelIds', 'ollamaBaseUrl', 'ollamaModel']
+        ['modelProvider', 'enabledModelIds', 'customModelIds',
+         'ollamaBaseUrl', 'ollamaModels', 'ollamaEnabledModels', 'ollamaModel']
     );
 
-    ACTIVE_SETTINGS.provider    = stored.modelProvider  || 'google';
-    ACTIVE_SETTINGS.ollamaUrl   = (stored.ollamaBaseUrl || 'http://localhost:11434').replace(/\/$/, '');
-    ACTIVE_SETTINGS.ollamaModel = stored.ollamaModel    || '';
+    ACTIVE_SETTINGS.provider  = stored.modelProvider || 'google';
+    ACTIVE_SETTINGS.ollamaUrl = (stored.ollamaBaseUrl || 'http://localhost:11434').replace(/\/$/, '');
 
     if (ACTIVE_SETTINGS.provider === 'ollama') {
-        const label = `Ollama (${ACTIVE_SETTINGS.ollamaModel || 'unconfigured'})`;
-        const ollamaEntry = { id: 'ollama', label, vision: false, isOllama: true };
-        MODEL_POOL       = [ollamaEntry];
-        AGENT_MODEL_POOL = [ollamaEntry];
+        // Support both new (ollamaModels array) and legacy (ollamaModel string) storage
+        const allOllamaIds = (stored.ollamaModels && stored.ollamaModels.length > 0)
+            ? stored.ollamaModels
+            : (stored.ollamaModel ? [stored.ollamaModel] : []);
+
+        const enabledIds = stored.ollamaEnabledModels;
+        const enabledModels = (enabledIds && enabledIds.length > 0)
+            ? allOllamaIds.filter(id => enabledIds.includes(id))
+            : allOllamaIds;
+
+        const activeModels = enabledModels.length > 0 ? enabledModels : allOllamaIds;
+
+        ACTIVE_SETTINGS.ollamaModel = activeModels[0] || stored.ollamaModel || '';
+
+        MODEL_POOL = activeModels.length > 0
+            ? activeModels.map(id => ({ id, label: `Ollama (${id})`, vision: false, isOllama: true }))
+            : [{ id: ACTIVE_SETTINGS.ollamaModel || 'ollama',
+                 label: `Ollama (${ACTIVE_SETTINGS.ollamaModel || 'unconfigured'})`,
+                 vision: false, isOllama: true }];
+        AGENT_MODEL_POOL = MODEL_POOL;
     } else {
+        ACTIVE_SETTINGS.ollamaModel = stored.ollamaModel || '';
+
         const customIds  = stored.customModelIds  || [];
         const customMods = customIds.map(id => ({ id, label: id, vision: false }));
         const allMods    = [...DEFAULT_GOOGLE_MODELS, ...customMods];
@@ -59,18 +77,19 @@ function pickAgentModel() {
 
 // ── Ollama API ────────────────────────────────────────────────────────────────
 
-async function callOllamaStructuring(payload) {
+async function callOllamaStructuring(payload, modelId) {
     const { ollamaUrl, ollamaModel } = ACTIVE_SETTINGS;
-    if (!ollamaModel) return { error: 'No Ollama model configured. Set it in Settings.' };
+    const model = modelId || ollamaModel;
+    if (!model) return { error: 'No Ollama model configured. Set it in Settings.' };
 
     const fullPrompt = SYSTEM_PROMPT + '\n\nRAW SCRAPED CONTENT:\n' + JSON.stringify(payload);
     try {
-        console.log(`[typingflow] callOllamaStructuring: model=${ollamaModel}`);
+        console.log(`[typingflow] callOllamaStructuring: model=${model}`);
         const response = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model:    ollamaModel,
+                model,
                 messages: [{ role: 'user', content: fullPrompt }],
                 format:   'json',
                 stream:   false,
@@ -99,8 +118,9 @@ async function callOllamaStructuring(payload) {
     }
 }
 
-async function callOllamaAgent(allMessages) {
+async function callOllamaAgent(allMessages, modelId) {
     const { ollamaUrl, ollamaModel } = ACTIVE_SETTINGS;
+    const model = modelId || ollamaModel;
     const messages = allMessages.map(m => ({
         role:    m.role === 'model' ? 'assistant' : m.role,
         content: m.text,
@@ -109,7 +129,7 @@ async function callOllamaAgent(allMessages) {
     const res = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: ollamaModel, messages, format: 'json', stream: false }),
+        body: JSON.stringify({ model, messages, format: 'json', stream: false }),
     }, 30000);
 
     if (!res.ok) {

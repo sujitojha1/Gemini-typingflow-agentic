@@ -63,8 +63,11 @@ async function extractFromTab(tabId) {
 }
 
 function callModelForStructuring(payload, model) {
-    if (model.isOllama || ACTIVE_SETTINGS.provider === 'ollama') {
-        return callOllamaStructuring(payload);
+    if (model.isOllama) {
+        return callOllamaStructuring(payload, model.id);
+    }
+    if (ACTIVE_SETTINGS.provider === 'ollama') {
+        return callOllamaStructuring(payload, ACTIVE_SETTINGS.ollamaModel);
     }
     return model.vision ? callGemmaAPI(payload) : callGeminiWithModel(payload, model.id);
 }
@@ -277,7 +280,7 @@ async function executeTool(toolName, args, imageIndex) {
 
 async function callAgent(allMessages, geminiApiKey, modelId) {
     if (ACTIVE_SETTINGS.provider === 'ollama') {
-        return callOllamaAgent(allMessages);
+        return callOllamaAgent(allMessages, modelId);
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
