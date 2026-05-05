@@ -28,8 +28,9 @@ const ollamaUrlIn   = document.getElementById('ollamaUrl');
 const ollamaModelList    = document.getElementById('ollamaModelList');
 const customOllamaInput  = document.getElementById('customOllamaModelId');
 const addOllamaModelBtn  = document.getElementById('addOllamaModelBtn');
-const testBtn       = document.getElementById('testOllamaBtn');
-const ollamaStatus  = document.getElementById('ollamaTestStatus');
+const testBtn            = document.getElementById('testOllamaBtn');
+const fetchModelsBtn     = document.getElementById('fetchOllamaModelsBtn');
+const ollamaStatus       = document.getElementById('ollamaTestStatus');
 const saveBtn       = document.getElementById('saveBtn');
 const saveStatus    = document.getElementById('saveStatus');
 
@@ -195,18 +196,50 @@ customOllamaInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') addOllamaModelBtn.click();
 });
 
-// ── Test Ollama connection ────────────────────────────────────────────────────
+// ── Test / Fetch Ollama models ────────────────────────────────────────────────
+
+async function fetchOllamaTags() {
+    const url = (ollamaUrlIn.value.trim() || 'http://localhost:11434').replace(/\/$/, '');
+    const res = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return (data.models || []).map(m => m.name);
+}
 
 testBtn.addEventListener('click', async () => {
-    const url = (ollamaUrlIn.value.trim() || 'http://localhost:11434').replace(/\/$/, '');
     ollamaStatus.textContent = 'Testing…';
     ollamaStatus.className = '';
     try {
-        const res = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const models = (data.models || []).map(m => m.name).join(', ') || '(none)';
-        ollamaStatus.textContent = `Connected — models: ${models}`;
+        const models = await fetchOllamaTags();
+        ollamaStatus.textContent = `Connected — models: ${models.join(', ') || '(none)'}`;
+        ollamaStatus.className = 'status-ok';
+    } catch (e) {
+        ollamaStatus.textContent = `Failed: ${e.message}`;
+        ollamaStatus.className = 'status-err';
+    }
+});
+
+fetchModelsBtn.addEventListener('click', async () => {
+    ollamaStatus.textContent = 'Fetching…';
+    ollamaStatus.className = '';
+    try {
+        const models = await fetchOllamaTags();
+        if (models.length === 0) {
+            ollamaStatus.textContent = 'No models found on this Ollama server.';
+            ollamaStatus.className = 'status-err';
+            return;
+        }
+        let added = 0;
+        for (const id of models) {
+            if (!ollamaModelIds.includes(id)) {
+                ollamaModelIds.push(id);
+                added++;
+            }
+        }
+        buildOllamaModelRows();
+        ollamaStatus.textContent = added > 0
+            ? `Added ${added} model${added > 1 ? 's' : ''}: ${models.join(', ')}`
+            : `Already up to date (${models.length} model${models.length > 1 ? 's' : ''} present)`;
         ollamaStatus.className = 'status-ok';
     } catch (e) {
         ollamaStatus.textContent = `Failed: ${e.message}`;
