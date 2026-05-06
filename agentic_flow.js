@@ -123,6 +123,7 @@ async function runAgentPipeline(tabId) {
 
     let structureResult = null;
     let usedModel = null;
+    let lastStructureError = 'all models exhausted';
     for (const model of MODEL_POOL) {
         const ts = Date.now();
         agentBroadcast(tabId, '[3/4] Structuring', model.label);
@@ -134,13 +135,17 @@ async function runAgentPipeline(tabId) {
                 agentBroadcast(tabId, '[3/4] Structured', model.label, `${Date.now() - ts}ms`);
                 break;
             }
+            lastStructureError = result.error || 'unknown error';
             console.warn(`[agent] ${model.label} failed:`, result.error);
+            agentBroadcast(tabId, '[3/4] Failed', model.label, result.error);
         } catch (e) {
+            lastStructureError = e.message;
             console.warn(`[agent] ${model.label} threw:`, e.message);
+            agentBroadcast(tabId, '[3/4] Error', model.label, e.message);
         }
     }
     if (!structureResult) {
-        agentBroadcast(tabId, 'error', null, 'all models exhausted');
+        agentBroadcast(tabId, 'error', null, lastStructureError);
         return;
     }
 

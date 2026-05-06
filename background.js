@@ -83,8 +83,12 @@ async function callOllamaStructuring(payload, modelId) {
     if (!model) return { error: 'No Ollama model configured. Set it in Settings.' };
 
     const fullPrompt = SYSTEM_PROMPT + '\n\nRAW SCRAPED CONTENT:\n' + JSON.stringify(payload);
+    // Estimate tokens (≈4 chars/token) and request enough context to hold the prompt + response
+    const estimatedTokens = Math.ceil(fullPrompt.length / 4);
+    const numCtx = Math.max(8192, estimatedTokens + 2048);
+
     try {
-        console.log(`[typingflow] callOllamaStructuring: model=${model}`);
+        console.log(`[typingflow] callOllamaStructuring: model=${model} prompt≈${estimatedTokens} tokens num_ctx=${numCtx}`);
         const response = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -93,16 +97,18 @@ async function callOllamaStructuring(payload, modelId) {
                 messages: [{ role: 'user', content: fullPrompt }],
                 format:   'json',
                 stream:   false,
+                options:  { num_ctx: numCtx },
             }),
-        }, 90000);
+        }, 120000);
 
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            return { error: `Ollama error (${response.status}): ${err.error || response.statusText}` };
+            const detail = err.error || response.statusText;
+            return { error: `Ollama ${response.status}: ${detail}` };
         }
         const data    = await response.json();
         const content = data.message?.content;
-        if (!content) return { error: 'Ollama returned empty response.' };
+        if (!content) return { error: 'Ollama returned empty content — model may not support JSON mode' };
 
         try {
             return { success: true, api_response: JSON.parse(content) };
@@ -111,10 +117,11 @@ async function callOllamaStructuring(payload, modelId) {
             if (match) {
                 try { return { success: true, api_response: JSON.parse(match[0]) }; } catch {}
             }
-            return { error: `Ollama JSON parse failed: ${e.message}` };
+            return { error: `Ollama JSON parse failed: ${e.message} | content[:200]: ${content.slice(0, 200)}` };
         }
     } catch (e) {
-        return { error: `Ollama request failed: ${e.message}` };
+        const msg = e.name === 'AbortError' ? 'Ollama timed out (model too slow for page size)' : `Ollama request failed: ${e.message}`;
+        return { error: msg };
     }
 }
 
@@ -129,8 +136,8 @@ async function callOllamaAgent(allMessages, modelId) {
     const res = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, format: 'json', stream: false }),
-    }, 30000);
+        body: JSON.stringify({ model, messages, format: 'json', stream: false, options: { num_ctx: 8192 } }),
+    }, 60000);
 
     if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
