@@ -1,8 +1,11 @@
+// Load shared model definitions first — MODEL_POOL init below depends on DEFAULT_GOOGLE_MODELS
+importScripts('shared_config.js');
+
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
 const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
 // ── Model definitions ─────────────────────────────────────────────────────────
-// DEFAULT_GOOGLE_MODELS is defined in shared_config.js (loaded first via importScripts)
+// DEFAULT_GOOGLE_MODELS is defined in shared_config.js (imported above)
 
 // Mutable pools — rebuilt by refreshActiveSettings() before each pipeline run
 let MODEL_POOL       = [...DEFAULT_GOOGLE_MODELS];
@@ -391,8 +394,6 @@ async function fallbackDataUrl(tags) {
 // Order matters: shared_config → tool_helper → tools → agentic_flow
 
 importScripts(
-    // Shared model definitions (defines DEFAULT_GOOGLE_MODELS)
-    'shared_config.js',
     // Shared LLM call helper (used by all tool_*.js files)
     'tools/tool_helper.js',
     // Chunk-processing tools
