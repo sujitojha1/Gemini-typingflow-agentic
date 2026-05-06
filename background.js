@@ -1,16 +1,8 @@
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
 const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
-
-// ── Model definitions ────────────────────────────────────────────────────────
-
-const DEFAULT_GOOGLE_MODELS = [
-    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini Flash Lite 3.1', vision: false },
-    { id: 'gemini-3-flash-preview',        label: 'Gemini 3 Flash',        vision: false },
-    { id: 'gemini-2.5-flash-lite',         label: 'Gemini 2.5 Flash Lite', vision: false },
-    { id: 'gemma-4-26b-a4b-it',           label: 'Gemma 4 26B',           vision: true  },
-    { id: 'gemma-4-31b-it',               label: 'Gemma 4 31B',           vision: true  },
-];
+// ── Model definitions ─────────────────────────────────────────────────────────
+// DEFAULT_GOOGLE_MODELS is defined in shared_config.js (loaded first via importScripts)
 
 // Mutable pools — rebuilt by refreshActiveSettings() before each pipeline run
 let MODEL_POOL       = [...DEFAULT_GOOGLE_MODELS];
@@ -33,7 +25,6 @@ async function refreshActiveSettings() {
     ACTIVE_SETTINGS.ollamaUrl = (stored.ollamaBaseUrl || 'http://localhost:11434').replace(/\/$/, '');
 
     if (ACTIVE_SETTINGS.provider === 'ollama') {
-        // Support both new (ollamaModels array) and legacy (ollamaModel string) storage
         const allOllamaIds = (stored.ollamaModels && stored.ollamaModels.length > 0)
             ? stored.ollamaModels
             : (stored.ollamaModel ? [stored.ollamaModel] : []);
@@ -44,7 +35,6 @@ async function refreshActiveSettings() {
             : allOllamaIds;
 
         const activeModels = enabledModels.length > 0 ? enabledModels : allOllamaIds;
-
         ACTIVE_SETTINGS.ollamaModel = activeModels[0] || stored.ollamaModel || '';
 
         MODEL_POOL = activeModels.length > 0
@@ -74,7 +64,7 @@ function pickAgentModel() {
     return AGENT_MODEL_POOL[Math.floor(Math.random() * AGENT_MODEL_POOL.length)];
 }
 
-// ── Ollama API ────────────────────────────────────────────────────────────────
+// ── Ollama API ─────────────────────────────────────────────────────────────────
 
 async function callOllamaStructuring(payload, modelId) {
     const { ollamaUrl, ollamaModel } = ACTIVE_SETTINGS;
@@ -82,7 +72,6 @@ async function callOllamaStructuring(payload, modelId) {
     if (!model) return { error: 'No Ollama model configured. Set it in Settings.' };
 
     const fullPrompt = SYSTEM_PROMPT + '\n\nRAW SCRAPED CONTENT:\n' + JSON.stringify(payload);
-    // Estimate tokens (≈4 chars/token) and request enough context to hold the prompt + response
     const estimatedTokens = Math.ceil(fullPrompt.length / 4);
     const numCtx = Math.max(8192, estimatedTokens + 2048);
 
@@ -159,7 +148,7 @@ async function callOllamaAgent(allMessages, modelId) {
     }
 }
 
-// Shared fetch with AbortController timeout — prevents silent hangs in service-worker context
+// Shared fetch with AbortController timeout
 async function fetchWithTimeout(url, options, timeoutMs = 25000) {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -199,7 +188,7 @@ function stripMarkdownFences(text) {
     return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 }
 
-// ── Structuring System Prompt ────────────────────────────────────────────────
+// ── Structuring System Prompt ──────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an expert learning engine and strict JSON structuring agent.
 You are given a chronologically ordered array of text chunks and image URLs scraped from an article.
@@ -227,7 +216,7 @@ EXPECTED JSON SCHEMA:
   ]
 }`;
 
-// ── Gemini API ───────────────────────────────────────────────────────────────
+// ── Gemini API ─────────────────────────────────────────────────────────────────
 
 async function callGeminiWithModel(payload, modelId) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
@@ -268,7 +257,7 @@ async function callGeminiWithModel(payload, modelId) {
     }
 }
 
-// ── Gemma API (vision-capable) ───────────────────────────────────────────────
+// ── Gemma API (vision-capable) ─────────────────────────────────────────────────
 
 async function callGemmaAPI(payload) {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
@@ -285,7 +274,6 @@ async function callGemmaAPI(payload) {
         { text: SYSTEM_PROMPT + '\n\nRAW SCRAPED CONTENT:\n' + JSON.stringify(textItems) }
     ];
 
-    // Fetch up to 5 page images in parallel and attach as inlineData for visual chunk-mapping
     const imageResults = await Promise.allSettled(
         imageItems.slice(0, 5).map(async (img) => {
             const r = await fetchWithTimeout(img.src, {}, 10000);
@@ -334,7 +322,7 @@ async function callGemmaAPI(payload) {
     }
 }
 
-// ── Image Generation ─────────────────────────────────────────────────────────
+// ── Image Generation ───────────────────────────────────────────────────────────
 
 async function generateContextualImage({ text, tags }) {
     const { imageQuotaExceeded } = await chrome.storage.session.get('imageQuotaExceeded');
@@ -399,12 +387,15 @@ async function fallbackDataUrl(tags) {
     }
 }
 
-// ── Load tool and agentic-flow modules ──────────────────────────────────────
-// importScripts executes synchronously in the service-worker global scope,
-// so all globals above are available to the imported files at call time.
+// ── Load shared config, tools, and agentic-flow modules ───────────────────────
+// Order matters: shared_config → tool_helper → tools → agentic_flow
 
 importScripts(
-    // Chunk-processing tools (parallel agentic track)
+    // Shared model definitions (defines DEFAULT_GOOGLE_MODELS)
+    'shared_config.js',
+    // Shared LLM call helper (used by all tool_*.js files)
+    'tools/tool_helper.js',
+    // Chunk-processing tools
     'tools/tool_check_relevance.js',
     'tools/tool_get_chunk_stats.js',
     'tools/tool_extract_subject.js',
@@ -412,11 +403,16 @@ importScripts(
     'tools/tool_check_grammar.js',
     'tools/tool_refine_chunk.js',
     'tools/tool_update_coverage.js',
+    // Previously unregistered tools (now active)
+    'tools/tool_calculate.js',
+    'tools/tool_search_nuggets.js',
+    'tools/tool_summarize_page.js',
+    'tools/tool_lookup_definition.js',
     // Agent pipeline & orchestration
     'agentic_flow.js'
 );
 
-// ── Message Router ───────────────────────────────────────────────────────────
+// ── Message Router ─────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "agent_start") {

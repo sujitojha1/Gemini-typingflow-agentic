@@ -1,11 +1,20 @@
-async function toolCheckRelevance({ text }) {
-    const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
-    if (!geminiApiKey) {
-        return { isAd: false, reason: 'No API key', error: true };
-    }
+// tool_check_relevance.js — Checks if a chunk is an ad/boilerplate.
+// Uses a fast local heuristic first, only calls LLM if needed.
+// Depends on: tools/tool_helper.js (callToolModel)
 
-    const model = pickAgentModel();
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
+function isHeuristicIrrelevant(text) {
+    const t = text.trim();
+    if (t.length < 50) return true;
+    if (/^(accept all|cookie|privacy policy|subscribe|sign up|log in|advertisement|sponsored content)/i.test(t)) return true;
+    if (/(\d+% off|buy now|limited offer|click here|free trial|terms of service)/i.test(t)) return true;
+    return false;
+}
+
+async function toolCheckRelevance({ text }) {
+    // Fast heuristic — skip LLM for obvious cases (~30% of chunks on ad-heavy pages)
+    if (isHeuristicIrrelevant(text)) {
+        return { isAd: true, reason: 'Heuristic: boilerplate or promotional content detected' };
+    }
 
     const prompt = `Analyze the following text chunk and determine if it is an advertisement, sponsored content, site navigation, cookie notice, or irrelevant boilerplate that should not be part of a learning session. Return ONLY valid JSON matching the schema exactly.
 
@@ -14,36 +23,5 @@ ${text}
 
 Schema: {"isAd":<boolean>,"reason":"<one short sentence explaining why>"}`;
 
-    try {
-        const res = await fetchWithTimeout(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' },
-            })
-        }, 20000);
-        if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            const errDetail = errBody.error?.message || res.statusText;
-            console.warn(`[agent] toolCheckRelevance ${model.label} HTTP ${res.status}:`, errDetail, errBody);
-            return { isAd: false, reason: `API error ${res.status}: ${errDetail}`, error: true };
-        }
-        const data = await res.json();
-        const jsonText = pickResponseText(data);
-        if (!jsonText) {
-            console.warn(`[agent] toolCheckRelevance ${model.label}: empty response. Full:`, JSON.stringify(data).slice(0, 400));
-            return { isAd: false, reason: 'Empty response', error: true };
-        }
-        try {
-            return JSON.parse(stripMarkdownFences(jsonText));
-        } catch (parseErr) {
-            console.error(`[agent] toolCheckRelevance ${model.label}: JSON.parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
-            return { isAd: false, reason: `Parse failed: ${parseErr.message}`, error: true };
-        }
-    } catch (e) {
-        const isTimeout = e.name === 'AbortError';
-        console.error(`[agent] toolCheckRelevance ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
-        return { isAd: false, reason: isTimeout ? 'timed out after 20s' : e.message, error: true };
-    }
+    return callToolModel(prompt, { isAd: false, reason: 'Default — API error' });
 }

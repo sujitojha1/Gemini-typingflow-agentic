@@ -949,6 +949,16 @@ function renderCurrentNugget() {
     setTimeout(() => input.focus(), 100);
     overlayWrapper.addEventListener('click', () => input.focus());
 
+    // Escape key skips the current chunk
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            document.removeEventListener('keydown', escHandler);
+            currentNuggetIndex++;
+            renderCurrentNugget();
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+
     input.addEventListener('input', (e) => {
         if (!startTime) startTime = Date.now();
         const typed = e.target.value;
@@ -1079,7 +1089,7 @@ if (!window.geminiTfEventListening) {
         } else if (request.action === 'check_session') {
             sendResponse({ hasSession: !!sessionData });
         } else if (request.action === 'agent_status') {
-            updateAgentBar(request.task, request.model);
+            updateAgentBar(request.task, request.model, request.detail);
             sendResponse({ ok: true });
         } else if (request.action === 'update_nuggets') {
             if (sessionData) {
@@ -1106,7 +1116,7 @@ if (!window.geminiTfEventListening) {
     });
 }
 
-function updateAgentBar(task, model) {
+function updateAgentBar(task, model, detail) {
     const bar     = document.getElementById('tf-agent-bar');
     const taskEl  = document.getElementById('tf-agent-task');
     const modelEl = document.getElementById('tf-agent-model');
@@ -1116,7 +1126,10 @@ function updateAgentBar(task, model) {
     const isError = task === 'error';
 
     bar.className = 'tf-agent-bar ' + (isError ? 'tf-agent-error' : isDone ? 'tf-agent-done' : 'tf-agent-active');
-    if (taskEl) taskEl.textContent = `agent · ${task}`;
+    if (taskEl) {
+        taskEl.textContent = `agent · ${task}`;
+        if (detail) taskEl.title = detail; // Show full detail on hover
+    }
     if (modelEl) modelEl.textContent = model && model !== 'null' ? `· ${model}` : '';
 }
 
