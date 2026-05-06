@@ -10,5 +10,7 @@ CHUNK:
 ${cleaned.slice(0, 800)}`;
 
     const result = await callToolModel(prompt, { subject: 'Untitled' });
-    return { subject: result.subject || 'Untitled' };
+    return result.error
+        ? { subject: 'Untitled', error: result.error }
+        : { subject: result.subject || 'Untitled' };
 }

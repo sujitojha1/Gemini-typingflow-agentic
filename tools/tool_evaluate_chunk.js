@@ -9,5 +9,5 @@ ${text}
 
 Schema: {"score":<integer 1-5>,"clarity":<integer 1-5>,"completeness":<integer 1-5>,"critique":"<one sentence identifying the main weakness>","suggestions":"<one sentence concrete improvement>"}`;
 
-    return callToolModel(prompt, { score: 0, clarity: 0, completeness: 0, critique: 'API error', suggestions: '' });
+    return callToolModel(prompt, { score: null, clarity: null, completeness: null, critique: 'API error', suggestions: '' });
 }

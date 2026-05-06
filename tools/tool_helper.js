@@ -11,42 +11,50 @@ async function callToolModel(prompt, defaultResult, timeoutMs = 20000) {
         return { ...defaultResult, error: 'No API key' };
     }
 
-    const model = pickAgentModel();
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
-
-    try {
-        const res = await fetchWithTimeout(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { response_mime_type: 'application/json' },
-            }),
-        }, timeoutMs);
-
-        if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            const errDetail = errBody.error?.message || res.statusText;
-            console.warn(`[tool] ${model.label} HTTP ${res.status}:`, errDetail);
-            return { ...defaultResult, error: `API ${res.status}: ${errDetail}` };
-        }
-
-        const data = await res.json();
-        const jsonText = pickResponseText(data);
-        if (!jsonText) {
-            console.warn(`[tool] ${model.label}: empty response`);
-            return { ...defaultResult, error: 'Empty response' };
-        }
-
+    // Try every model in the pool before giving up — mirrors the Track 1 structuring loop
+    let lastError = 'no models available';
+    for (const model of AGENT_MODEL_POOL) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${geminiApiKey}`;
         try {
-            return JSON.parse(stripMarkdownFences(jsonText));
-        } catch (parseErr) {
-            console.error(`[tool] ${model.label}: JSON parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
-            return { ...defaultResult, error: `Parse failed: ${parseErr.message}` };
+            const res = await fetchWithTimeout(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { response_mime_type: 'application/json' },
+                }),
+            }, timeoutMs);
+
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                lastError = `API ${res.status}: ${errBody.error?.message || res.statusText}`;
+                console.warn(`[tool] ${model.label} HTTP ${res.status} — trying next model`);
+                continue;
+            }
+
+            const data = await res.json();
+            const jsonText = pickResponseText(data);
+            if (!jsonText) {
+                lastError = 'Empty response';
+                console.warn(`[tool] ${model.label}: empty response — trying next model`);
+                continue;
+            }
+
+            try {
+                return JSON.parse(stripMarkdownFences(jsonText));
+            } catch (parseErr) {
+                lastError = `Parse failed: ${parseErr.message}`;
+                console.error(`[tool] ${model.label}: JSON parse failed:`, parseErr.message, '| raw:', jsonText.slice(0, 200));
+                continue;
+            }
+        } catch (e) {
+            const isTimeout = e.name === 'AbortError';
+            lastError = isTimeout ? `timed out after ${timeoutMs}ms` : e.message;
+            console.error(`[tool] ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
+            continue;
         }
-    } catch (e) {
-        const isTimeout = e.name === 'AbortError';
-        console.error(`[tool] ${model.label} ${isTimeout ? 'TIMEOUT' : 'threw'}:`, e.message);
-        return { ...defaultResult, error: isTimeout ? `timed out after ${timeoutMs}ms` : e.message };
     }
+
+    console.warn('[tool] callToolModel: all models exhausted —', lastError);
+    return { ...defaultResult, error: lastError };
 }

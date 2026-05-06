@@ -269,7 +269,7 @@ async function processOneChunk(nugget, chunkIdx, totalChunks, imageIndex, tabId)
     const [stats, subject, evaluation, grammar] = await Promise.all([
         Promise.resolve(toolGetChunkStats({ text })),
         toolExtractSubject({ text }).catch(e => ({ subject: 'Untitled', error: e.message })),
-        toolEvaluateChunk({ text }).catch(e => ({ score: 0, critique: e.message, error: true })),
+        toolEvaluateChunk({ text }).catch(e => ({ score: null, critique: e.message, error: true })),
         toolCheckGrammar({ text }).catch(e => ({ isProper: true, issues: e.message, error: true })),
     ]);
     steps.push(
