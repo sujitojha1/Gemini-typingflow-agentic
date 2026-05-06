@@ -201,6 +201,7 @@ customOllamaInput.addEventListener('keydown', e => {
 async function fetchOllamaTags() {
     const url = (ollamaUrlIn.value.trim() || 'http://localhost:11434').replace(/\/$/, '');
     const res = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (res.status === 403) throw new Error('403 Forbidden — restart Ollama with: OLLAMA_ORIGINS=* ollama serve');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return (data.models || []).map(m => m.name);

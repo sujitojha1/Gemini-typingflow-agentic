@@ -102,6 +102,9 @@ async function callOllamaStructuring(payload, modelId) {
         }, 120000);
 
         if (!response.ok) {
+            if (response.status === 403) {
+                return { error: 'Ollama 403: restart with OLLAMA_ORIGINS=* ollama serve' };
+            }
             const err = await response.json().catch(() => ({}));
             const detail = err.error || response.statusText;
             return { error: `Ollama ${response.status}: ${detail}` };
@@ -140,6 +143,7 @@ async function callOllamaAgent(allMessages, modelId) {
     }, 60000);
 
     if (!res.ok) {
+        if (res.status === 403) throw new Error('Ollama 403: restart with OLLAMA_ORIGINS=* ollama serve');
         const errBody = await res.json().catch(() => ({}));
         throw new Error(`Ollama agent ${res.status}: ${errBody.error || res.statusText}`);
     }
