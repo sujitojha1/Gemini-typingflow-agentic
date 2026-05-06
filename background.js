@@ -1,7 +1,6 @@
 const GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image";
 const GEMMA_MODEL       = "gemma-4-26b-a4b-it";
 
-let imageQuotaExceeded = false;
 
 // ── Model definitions ────────────────────────────────────────────────────────
 
@@ -136,10 +135,12 @@ async function callOllamaAgent(allMessages, modelId) {
         content: m.text,
     }));
 
+    const historyText = messages.map(m => m.content || '').join('');
+    const numCtx = Math.max(8192, Math.ceil(historyText.length / 4) + 2048);
     const res = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, format: 'json', stream: false, options: { num_ctx: 8192 } }),
+        body: JSON.stringify({ model, messages, format: 'json', stream: false, options: { num_ctx: numCtx } }),
     }, 60000);
 
     if (!res.ok) {
@@ -336,6 +337,7 @@ async function callGemmaAPI(payload) {
 // ── Image Generation ─────────────────────────────────────────────────────────
 
 async function generateContextualImage({ text, tags }) {
+    const { imageQuotaExceeded } = await chrome.storage.session.get('imageQuotaExceeded');
     if (imageQuotaExceeded) return { success: true, img_src: await fallbackDataUrl(tags) };
 
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
@@ -357,7 +359,7 @@ async function generateContextualImage({ text, tags }) {
         if (!response.ok) {
             const errBody = await response.json().catch(() => ({}));
             if (response.status === 429) {
-                imageQuotaExceeded = true;
+                chrome.storage.session.set({ imageQuotaExceeded: true });
                 console.warn(`[typingflow] Image quota exceeded — skipping image generation for this session`);
             } else {
                 console.warn(`[typingflow] Image API ${response.status}:`, errBody?.error?.message || response.statusText);
@@ -429,8 +431,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         (async () => {
             await refreshActiveSettings();
             if (ACTIVE_SETTINGS.provider === 'ollama') {
-                const result = await callOllamaStructuring(request.payload);
-                sendResponse(result);
+                for (const model of MODEL_POOL) {
+                    const result = await callOllamaStructuring(request.payload, model.id);
+                    if (result.success) { sendResponse(result); return; }
+                    console.warn(`[typingflow] proxy_gemini_api: ${model.label} failed:`, result.error);
+                }
+                sendResponse({ error: 'All Ollama models failed' });
                 return;
             }
             for (const model of MODEL_POOL) {

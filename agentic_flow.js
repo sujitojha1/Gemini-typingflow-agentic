@@ -66,9 +66,6 @@ function callModelForStructuring(payload, model) {
     if (model.isOllama) {
         return callOllamaStructuring(payload, model.id);
     }
-    if (ACTIVE_SETTINGS.provider === 'ollama') {
-        return callOllamaStructuring(payload, ACTIVE_SETTINGS.ollamaModel);
-    }
     return model.vision ? callGemmaAPI(payload) : callGeminiWithModel(payload, model.id);
 }
 
@@ -284,13 +281,7 @@ async function executeTool(toolName, args, imageIndex) {
 // ── LLM caller (uses sliding context window) ─────────────────────────────────
 
 async function callAgent(allMessages, geminiApiKey, modelId) {
-    if (ACTIVE_SETTINGS.provider === 'ollama') {
-        return callOllamaAgent(allMessages, modelId);
-    }
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
-
-    // Sliding window: always keep the first message (system prompt) + last N
+    // Sliding window applied for both providers: always keep system prompt + last N turns
     let messages;
     if (allMessages.length > CONTEXT_WINDOW + 1) {
         const trimNote = { role: 'user', text: `[Context trimmed. ${allMessages.length - CONTEXT_WINDOW - 1} earlier turns omitted. Continue from where you left off.]` };
@@ -298,6 +289,12 @@ async function callAgent(allMessages, geminiApiKey, modelId) {
     } else {
         messages = allMessages;
     }
+
+    if (ACTIVE_SETTINGS.provider === 'ollama') {
+        return callOllamaAgent(messages, modelId);
+    }
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiApiKey}`;
 
     const contents = messages.map(m => ({
         role: m.role,
@@ -586,6 +583,7 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
         agentBroadcast(tabId, '[Agent] Chunking model', `Ollama (${ollamaModel})`,
             `${textBlocks.length} blocks`);
         try {
+            const numCtx = Math.max(8192, Math.ceil(prompt.length / 4) + 2048);
             const res = await fetchWithTimeout(`${ollamaUrl}/api/chat`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -594,6 +592,7 @@ Rules: group related consecutive blocks; each chunk MUST be strictly under 300 w
                     messages: [{ role: 'user', content: prompt }],
                     format:   'json',
                     stream:   false,
+                    options:  { num_ctx: numCtx },
                 }),
             }, 90000);
             if (!res.ok) {

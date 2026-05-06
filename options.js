@@ -68,8 +68,14 @@ function buildModelRows() {
 
         const info = document.createElement('div');
         info.className = 'model-row-info';
-        info.innerHTML = `<div class="model-row-label">${model.label}</div>
-                          <div class="model-row-id">${model.id}</div>`;
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'model-row-label';
+        labelDiv.textContent = model.label;
+        const idDiv = document.createElement('div');
+        idDiv.className = 'model-row-id';
+        idDiv.textContent = model.id;
+        info.appendChild(labelDiv);
+        info.appendChild(idDiv);
 
         row.appendChild(cb);
         row.appendChild(info);
