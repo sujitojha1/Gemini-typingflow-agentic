@@ -121,10 +121,17 @@ async function runAgentPipeline(tabId) {
         .filter(p => p.type === 'image' && isValidHttpUrl(p.src))
         .map((img, idx) => ({ idx, src: img.src }));
 
+    // Track 1: always lead with Gemini Flash Lite for fast initial load.
+    // If no Gemini key (e.g. Ollama-only setup), fall back to MODEL_POOL (Ollama).
+    const seenIds = new Set();
+    const track1Pool = (geminiApiKey ? [DEFAULT_GOOGLE_MODELS[0]] : [])
+        .concat(MODEL_POOL)
+        .filter(m => { if (seenIds.has(m.id)) return false; seenIds.add(m.id); return true; });
+
     let structureResult = null;
     let usedModel = null;
     let lastStructureError = 'all models exhausted';
-    for (const model of MODEL_POOL) {
+    for (const model of track1Pool) {
         const ts = Date.now();
         agentBroadcast(tabId, '[3/4] Structuring', model.label);
         try {

@@ -45,7 +45,8 @@ async function refreshActiveSettings() {
             : [{ id: ACTIVE_SETTINGS.ollamaModel || 'ollama',
                  label: `Ollama (${ACTIVE_SETTINGS.ollamaModel || 'unconfigured'})`,
                  vision: false, isOllama: true }];
-        AGENT_MODEL_POOL = MODEL_POOL;
+        // Track 2 tools (callToolModel) always call Gemini API — keep AGENT_MODEL_POOL as Google models
+        AGENT_MODEL_POOL = [...DEFAULT_GOOGLE_MODELS];
     } else {
         ACTIVE_SETTINGS.ollamaModel = stored.ollamaModel || '';
 
