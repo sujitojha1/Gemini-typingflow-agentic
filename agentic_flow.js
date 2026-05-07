@@ -24,6 +24,8 @@
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const CONCURRENCY_LIMIT = 3; // Chunks processed simultaneously (rate-limit safe)
+const MULTIPASS_WORD_THRESHOLD = 3000; // Articles above this word count are split into sections
+const SECTION_MAX_WORDS = 2000;        // Target words per section in multi-pass mode
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +76,78 @@ function callModelForStructuring(payload, model) {
     return model.vision ? callGemmaAPI(payload) : callGeminiWithModel(payload, model.id);
 }
 
+// ── Multi-pass helpers ────────────────────────────────────────────────────────
+
+// Splits payload into sections ≤ SECTION_MAX_WORDS, keeping images with their surrounding text.
+function splitPayloadIntoSections(payload, maxWords = SECTION_MAX_WORDS) {
+    const sections = [];
+    let current = [];
+    let words = 0;
+
+    for (const item of payload) {
+        if (item.type === 'text') {
+            const w = item.content.split(/\s+/).length;
+            if (words + w > maxWords && current.length > 0) {
+                sections.push(current);
+                current = [item];
+                words = w;
+            } else {
+                current.push(item);
+                words += w;
+            }
+        } else {
+            // Images travel with the current section
+            current.push(item);
+        }
+    }
+    if (current.length > 0) sections.push(current);
+    return sections;
+}
+
+// Tries every model in the pool; returns { result, model } or null on total failure.
+async function structureWithFallback(payload, modelPool, tabId) {
+    for (const model of modelPool) {
+        agentBroadcast(tabId, '[3/4] Structuring', model.label);
+        const ts = Date.now();
+        try {
+            const result = await callModelForStructuring(payload, model);
+            if (result.success) {
+                agentBroadcast(tabId, '[3/4] Structured', model.label, `${Date.now() - ts}ms`);
+                return { result, model };
+            }
+            agentBroadcast(tabId, '[3/4] Failed', model.label, result.error);
+        } catch (e) {
+            agentBroadcast(tabId, '[3/4] Error', model.label, e.message);
+        }
+    }
+    return null;
+}
+
+// Merges nugget arrays from multiple section results into one unified response.
+function mergeStructuredSections(sectionOutputs) {
+    const allNuggets = sectionOutputs.flatMap(o => o.nuggets || []);
+    const allTags    = [...new Set(sectionOutputs.flatMap(o => o.tags || []))].slice(0, 8);
+    const ratings    = sectionOutputs.map(o => o.star_rating).filter(Boolean);
+    const avgRating  = ratings.length
+        ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length)
+        : 3;
+
+    // Recompute coverage based on merged nugget word count vs. full article word count
+    const nuggetWords = allNuggets.reduce((s, n) => s + (n.text || '').split(/\s+/).length, 0);
+    const sourceWords = sectionOutputs.reduce((s, o) => s + (o._sourceWords || 0), 0);
+    const coverage_pct = sourceWords > 0
+        ? Math.min(99, Math.round((nuggetWords / sourceWords) * 100))
+        : sectionOutputs[0]?.coverage_pct ?? 85;
+
+    return {
+        tldr:         sectionOutputs[0]?.tldr || '',
+        tags:         allTags,
+        star_rating:  avgRating,
+        coverage_pct,
+        nuggets:      allNuggets,
+    };
+}
+
 // ── Track 1: Fast Gallery Pipeline ────────────────────────────────────────────
 
 async function runAgentPipeline(tabId) {
@@ -121,6 +195,11 @@ async function runAgentPipeline(tabId) {
         .filter(p => p.type === 'image' && isValidHttpUrl(p.src))
         .map((img, idx) => ({ idx, src: img.src }));
 
+    // Count total article words for coverage calculation
+    const originalArticleWords = payload
+        .filter(p => p.type === 'text')
+        .reduce((sum, p) => sum + p.content.split(/\s+/).length, 0);
+
     // Track 1: always lead with Gemini Flash Lite for fast initial load.
     // If no Gemini key (e.g. Ollama-only setup), fall back to MODEL_POOL (Ollama).
     const seenIds = new Set();
@@ -130,28 +209,46 @@ async function runAgentPipeline(tabId) {
 
     let structureResult = null;
     let usedModel = null;
-    let lastStructureError = 'all models exhausted';
-    for (const model of track1Pool) {
-        const ts = Date.now();
-        agentBroadcast(tabId, '[3/4] Structuring', model.label);
-        try {
-            const result = await callModelForStructuring(payload, model);
-            if (result.success) {
-                structureResult = result;
-                usedModel = model;
-                agentBroadcast(tabId, '[3/4] Structured', model.label, `${Date.now() - ts}ms`);
-                break;
+
+    if (originalArticleWords > MULTIPASS_WORD_THRESHOLD) {
+        // ── Multi-pass: split long articles into sections ──────────────────────
+        const sections = splitPayloadIntoSections(payload);
+        agentBroadcast(tabId, '[3/4] Multi-pass', '—',
+            `${originalArticleWords} words → ${sections.length} sections`);
+
+        const sectionOutputs = [];
+        for (let i = 0; i < sections.length; i++) {
+            const section = sections[i];
+            const sectionWords = section
+                .filter(p => p.type === 'text')
+                .reduce((sum, p) => sum + p.content.split(/\s+/).length, 0);
+            agentBroadcast(tabId, `[3/4] Section ${i + 1}/${sections.length}`, '—',
+                `${sectionWords} words`);
+
+            const hit = await structureWithFallback(section, track1Pool, tabId);
+            if (!hit) {
+                agentBroadcast(tabId, 'error', null, `Section ${i + 1} failed — all models exhausted`);
+                return;
             }
-            lastStructureError = result.error || 'unknown error';
-            agentBroadcast(tabId, '[3/4] Failed', model.label, result.error);
-        } catch (e) {
-            lastStructureError = e.message;
-            agentBroadcast(tabId, '[3/4] Error', model.label, e.message);
+            if (!usedModel) usedModel = hit.model;
+            const parsed = hit.result.api_response;
+            parsed._sourceWords = sectionWords;
+            sectionOutputs.push(parsed);
         }
-    }
-    if (!structureResult) {
-        agentBroadcast(tabId, 'error', null, lastStructureError);
-        return;
+
+        const merged = mergeStructuredSections(sectionOutputs);
+        structureResult = { success: true, api_response: merged };
+        agentBroadcast(tabId, '[3/4] Merged', usedModel.label,
+            `${merged.nuggets.length} nuggets | cov ${merged.coverage_pct}%`);
+    } else {
+        // ── Single-pass: short article fits in one call ────────────────────────
+        const hit = await structureWithFallback(payload, track1Pool, tabId);
+        if (!hit) {
+            agentBroadcast(tabId, 'error', null, 'all models exhausted');
+            return;
+        }
+        structureResult = hit.result;
+        usedModel = hit.model;
     }
 
     const nuggets = structureResult.api_response.nuggets || [];
@@ -182,7 +279,7 @@ async function runAgentPipeline(tabId) {
         // Keep service worker alive during background processing (Chrome kills it after ~30s)
         const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
 
-        processChunksInParallel(tabId, nuggets, imageIndex, sessionId, structureResult.api_response)
+        processChunksInParallel(tabId, nuggets, imageIndex, sessionId, structureResult.api_response, originalArticleWords)
             .catch(e => {
                 console.error('[agent] processChunksInParallel fatal:', e.message);
                 agentBroadcast(tabId, 'error', null, `Enhancement failed: ${e.message}`);
@@ -195,7 +292,7 @@ async function runAgentPipeline(tabId) {
 // Processes all nuggets concurrently in batches of CONCURRENCY_LIMIT.
 // Results are sent to the tab overlay via 'update_nuggets' to enrich the gallery.
 
-async function processChunksInParallel(tabId, nuggets, imageIndex, sessionId, initialData) {
+async function processChunksInParallel(tabId, nuggets, imageIndex, sessionId, initialData, originalArticleWords = 0) {
     const loopStart = Date.now();
     agentBroadcast(tabId, '[Agent] Enhancing', '—',
         `${nuggets.length} chunks × ${CONCURRENCY_LIMIT} parallel`);
@@ -215,6 +312,14 @@ async function processChunksInParallel(tabId, nuggets, imageIndex, sessionId, in
 
     // Assemble refined data — filter ads, keep valid nuggets
     const validResults = results.filter(r => !r.isAd);
+
+    // Compute real coverage: refined nugget words vs. original article words
+    const refinedWordCount = validResults.reduce(
+        (sum, r) => sum + (r.refinedText || '').split(/\s+/).length, 0);
+    const computedCoverage = originalArticleWords > 0
+        ? Math.min(99, Math.round((refinedWordCount / originalArticleWords) * 100))
+        : initialData.coverage_pct;
+
     const refinedData = {
         nuggets: validResults.map(r => ({
             text: r.refinedText,
@@ -223,13 +328,12 @@ async function processChunksInParallel(tabId, nuggets, imageIndex, sessionId, in
             subject: r.subject,
             stats: r.stats,
             score: r.evaluation?.score ?? null,
-            coverage: r.coverage,
         })),
         // Preserve top-level metadata from initial structuring
         tldr: initialData.tldr,
         tags: initialData.tags,
         star_rating: initialData.star_rating,
-        coverage_pct: initialData.coverage_pct,
+        coverage_pct: computedCoverage,
         sessionId,
         totalMs: Date.now() - loopStart,
         processHistory: results.map(r => ({ chunkIdx: r.chunkIdx, steps: r.steps || [] })),
@@ -300,12 +404,12 @@ async function processOneChunk(nugget, chunkIdx, totalChunks, imageIndex, tabId)
         steps.push({ tool: 'generateChunkImage', result: { img_src: imgSrc } });
     }
 
-    // Step H: Coverage
-    const coverage = Math.round(((chunkIdx + 1) / totalChunks) * 100);
-    steps.push({ tool: 'updateCoverage', result: { coverage, processed: chunkIdx + 1, total: totalChunks } });
+    // Step H: Coverage — track completion per chunk (real coverage computed after all chunks finish)
+    const chunkProgress = Math.round(((chunkIdx + 1) / totalChunks) * 100);
+    steps.push({ tool: 'updateCoverage', result: { processed: chunkIdx + 1, total: totalChunks } });
 
     agentBroadcast(tabId, `[C${chunkIdx + 1}/${totalChunks}] Done`, '—',
-        `score:${evaluation?.score ?? '?'} grammar:${grammar.isProper ? '✓' : '✗'} cov:${coverage}%`);
+        `score:${evaluation?.score ?? '?'} grammar:${grammar.isProper ? '✓' : '✗'} progress:${chunkProgress}%`);
 
     return {
         chunkIdx,
@@ -316,7 +420,6 @@ async function processOneChunk(nugget, chunkIdx, totalChunks, imageIndex, tabId)
         subject: subject.subject || 'Untitled',
         stats,
         evaluation,
-        coverage,
         steps,
     };
 }

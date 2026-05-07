@@ -88,6 +88,15 @@
 - [x] Enhanced evaluation prompts across tools for rubric clarity and output specificity.
 - [x] Removed unused Gemma 3 models from pool; standardised JSON response handling across all models.
 
+## Phase 13: Full-Document Chunking & Real Coverage
+- [x] **System prompt: mandatory full coverage** — rule 3 now explicitly instructs the LLM to "systematically work through the source content from FIRST item to LAST", with no upper limit on nugget count, and a NEVER-skip directive for minor/short sections.
+- [x] **System prompt: anchored coverage_pct** — rule 6 now defines `coverage_pct` as `(sum of nugget word counts) ÷ (sum of source text word counts) × 100`, with a ≥ 90% target and a feedback loop: "if coverage would fall below 80%, add more nuggets."
+- [x] **Nugget word limit raised** — max per nugget increased from 300 → 400 words so dense sections don't have to be artificially split mid-thought.
+- [x] **DOM extraction expanded** — `content.js` now captures `h4`, `h5`, `figcaption`, and `pre` elements; heading char threshold lowered from 30 → 3 so structural labels like "Summary" and "Key Takeaways" are preserved.
+- [x] **Multi-pass chunking for long articles** — articles above 3 000 words are split into ~2 000-word sections in `agentic_flow.js`; each section is structured independently (`structureWithFallback`) and the results are merged via `mergeStructuredSections` (deduplicated tags, averaged star rating, computed coverage).
+- [x] **Real coverage_pct in Track 2** — `processChunksInParallel` now computes coverage as `(refined nugget words) ÷ (original article words) × 100` rather than using the LLM's self-reported value.
+- [x] **processOneChunk: positional coverage removed** — the per-chunk `coverage` field (which was just chunk index progress) is replaced by a `chunkProgress` log-only value; the authoritative `coverage_pct` is now computed once over all results after Track 2 finishes.
+
 ---
 
 ## Agentic Tweaks

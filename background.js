@@ -196,25 +196,25 @@ function stripMarkdownFences(text) {
 
 const SYSTEM_PROMPT = `You are an expert learning engine and strict JSON structuring agent.
 You are given a chronologically ordered array of text chunks and image URLs scraped from an article.
-Your task is to structure this content into a rich learning payload.
+Your task is to structure this content into a rich, COMPLETE learning payload.
 
 RULES:
 1. Generate a 'tldr' (a single-sentence summary of the entire page).
-2. Auto-extract an array of 3-5 semantic 'tags'. Every tag MUST start with '#' and use lowercase camelCase (e.g., "#machineLearning", "#uxDesign").
-3. Group logically related original text chunks into semantic "nuggets" to preserve the author's voice. Each nugget MUST be between 50 and 300 words. Do NOT heavily rewrite — just chunk intelligently. If a chunk contains code, formulas, or structured data, keep it verbatim inside the nugget text.
+2. Auto-extract an array of 3–8 semantic 'tags'. Every tag MUST start with '#' and use lowercase camelCase (e.g., "#machineLearning", "#uxDesign").
+3. Systematically work through the source content from FIRST item to LAST. Group logically related consecutive text chunks into semantic "nuggets" that preserve the author's voice. Each nugget MUST be 50–400 words. Do NOT heavily rewrite — just chunk intelligently. CRITICAL: there is NO upper limit on nugget count — create as many nuggets as needed to cover every distinct topic or section. NEVER merge unrelated topics into one nugget and NEVER skip a section because it seems short or minor. If a chunk contains code, formulas, or structured data, keep it verbatim inside the nugget text.
 4. For 'img_src': assign an image URL to a nugget only if the image appears within 3 positions of that nugget in the source array AND its subject visually matches the nugget topic. Otherwise set 'img_src' to null.
 5. Return a 'star_rating' (integer 1-5): your editorial quality and depth assessment of the article content.
-6. Return a 'coverage_pct' (integer 0-100): the percentage of the page's meaningful content captured across all nuggets combined.
+6. Return a 'coverage_pct' (integer 0-100): compute this as (total words across all nugget texts) ÷ (total words across all source text items) × 100, rounded to the nearest integer. Aim for ≥ 90%. If your coverage_pct would fall below 80%, add more nuggets for the sections you have not yet covered.
 
 EXPECTED JSON SCHEMA:
 {
   "tldr": "string",
   "star_rating": 4,
-  "coverage_pct": 85,
+  "coverage_pct": 92,
   "tags": ["#tag1", "#tag2"],
   "nuggets": [
     {
-      "text": "The logically grouped original text chunks representing this concept (50–300 words).",
+      "text": "The logically grouped original text chunks representing this concept (50–400 words).",
       "img_src": "url_string_or_null"
     }
   ]

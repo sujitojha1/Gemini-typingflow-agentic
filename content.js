@@ -8,7 +8,8 @@ function isValidHttpUrl(str) {
 // Phase 2: Advanced DOM Extraction for Semantic LLM Structuring
 function extractPageContent() {
     const root = document.querySelector('article, main, [role="main"]') || document.body;
-    const elements = Array.from(root.querySelectorAll('p, h1, h2, h3, li, blockquote, img'))
+    const isHeading = el => /^H[1-5]$/.test(el.tagName);
+    const elements = Array.from(root.querySelectorAll('p, h1, h2, h3, h4, h5, li, blockquote, figcaption, pre, img'))
         .filter(el => {
             if (el.closest('nav, header, footer, aside, [role="navigation"]')) return false;
             if (el.tagName === 'IMG') {
@@ -16,7 +17,9 @@ function extractPageContent() {
                 if ((el.width && el.width < 100) || rect.width < 100) return false;
                 return true;
             }
-            if (el.tagName !== 'IMG' && el.innerText.trim().length < 30) return false;
+            // Headings provide structural context even when short (e.g. "Summary", "Key Takeaways")
+            if (isHeading(el)) return el.innerText.trim().length >= 3;
+            if (el.innerText.trim().length < 30) return false;
             return true;
         });
 
