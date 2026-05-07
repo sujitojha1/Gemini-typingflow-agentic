@@ -51,7 +51,7 @@
 - [x] XSS — image panel built with `createElement` + validated `img.src`, not `innerHTML`.
 - [x] XSS — char spans built with `createElement` + `span.textContent`, not `innerHTML`.
 - [x] Race condition — async image callbacks capture `capturedIndex` at request time.
-- [x] Model constants (`GEMINI_TEXT_MODEL`, `GEMINI_IMAGE_MODEL`, `GEMMA_MODEL`) at top of `background.js`.
+- [x] Model constants at top of `background.js`.
 - [x] Optional chaining on `candidates[0]?.content?.parts[0]?.text`.
 - [x] Null guards on all `tabs[0]` accesses.
 
@@ -68,6 +68,25 @@
 - [x] Popup header: "Gemini TypingFlow — Agentic".
 - [x] Settings moved to inline icon button (⚙) in popup meta row.
 - [x] Refresh icon button (↻) in popup meta row with 0.6s spin animation.
+
+## Phase 11: Multi-Provider Model Support
+- [x] **Provider toggle in Settings** — Google AI (default) or local Ollama server.
+- [x] **Google model pool manager** — per-model enable/disable checkboxes, custom model ID input, vision badge; defaults defined in `shared_config.js`.
+- [x] **Ollama integration** — configurable base URL (default `http://localhost:11434`); "Test Connection" button fetches `/api/tags` and reports available models; "Fetch Models" button auto-populates the model pool; per-model enable/disable toggles.
+- [x] **Provider-aware Track 1** — `callModelForStructuring` uses Ollama API (`/api/generate` with `num_ctx` auto-sized from content length) when Ollama provider is active; falls back to Google API otherwise.
+- [x] **Track 2 always Google** — `AGENT_MODEL_POOL` is always `DEFAULT_GOOGLE_MODELS` regardless of provider, ensuring tool calls use the Gemini API.
+- [x] **`refreshActiveSettings()`** — rebuilds `MODEL_POOL` and `AGENT_MODEL_POOL` from `chrome.storage.sync` before each pipeline run.
+- [x] Ollama 403 error surfaced with actionable fix message: `OLLAMA_ORIGINS=* ollama serve`.
+
+## Phase 12: Tool Infrastructure Refactor
+- [x] **`shared_config.js`** — single source of truth for `DEFAULT_GOOGLE_MODELS`; imported via `importScripts` in `background.js` and via `<script>` tag in `options.html`.
+- [x] **`tool_helper.js`** — shared `callToolModel(prompt, defaultResult, timeoutMs)` helper used by all `tool_*.js` files; eliminates ~35 lines of boilerplate per tool; iterates `AGENT_MODEL_POOL` with per-model fallback on HTTP error, empty response, or parse failure.
+- [x] **`agentic_flow.js`** — replaces the old sequential ReAct loop with a concurrency-limited parallel pipeline:
+    - Old: 70+ sequential LLM calls → 3–5 minutes end-to-end.
+    - New: up to 3 chunks processed simultaneously; within each chunk, `getChunkStats` + `extractSubject` + `evaluateChunk` + `checkGrammar` run in parallel → **~20–30 seconds**.
+- [x] Improved error handling in `toolEvaluateChunk` and `toolExtractSubject` — structured error fields instead of thrown exceptions.
+- [x] Enhanced evaluation prompts across tools for rubric clarity and output specificity.
+- [x] Removed unused Gemma 3 models from pool; standardised JSON response handling across all models.
 
 ---
 
@@ -88,7 +107,7 @@ Displayed in a `page-meta` row between the header and action buttons, alongside 
 
 ### Tweak 2 — Dual-Track Agentic Workflow ✅
 
-Two processes run on every extraction. The user sees the deterministic Normal Process results immediately, while the Agentic Process refines them in the background via a **ReAct (Reasoning + Acting)** agent loop without blocking the UI.
+Two processes run on every extraction. The user sees the Normal Process results immediately, while the Agentic Process refines them in the background via a **parallel chunk pipeline** without blocking the UI.
 
 **Flow:**
 
@@ -98,25 +117,21 @@ User clicks Process Page Intelligence
 DOM extracted (text blocks + image URLs)
   ↓
 ┌─────────────────────────────────┐   ┌──────────────────────────────────────────────┐
-│ Track 1: Normal Process         │   │ Track 2: Agentic Process (ReAct Loop)        │
-│ (Primary Model Pool)            │   │                                              │
-│                                 │   │ 1. Session & Content Indexing                │
-│ Fast text-only structuring      │   │ 2. Semantic Chunk Identification             │
-│ ~2s                             │   │ 3. ReAct Loop:                               │
-│                                 │   │    system_prompt(tools, plan, chunks)         │
-│                                 │   │      ↓                                       │
-│                                 │   │    LLM → { thought, tool, args }             │
-│                                 │   │      ↓                                       │
-│                                 │   │    Runtime executes tool(args)               │
-│                                 │   │      ↓                                       │
-│                                 │   │    Result fed back to LLM                    │
-│                                 │   │      ↓                                       │
-│                                 │   │    Loop until LLM emits { tool: "DONE" }     │
-│                                 │   │ 4. State Handoff                             │
+│ Track 1: Normal Process         │   │ Track 2: Agentic Process (Parallel Pipeline) │
+│ (Active Model Pool)             │   │ (always Google AI models)                    │
+│                                 │   │                                              │
+│ Fast text-only structuring      │   │ For each nugget (≤3 concurrent):             │
+│ Google AI or Ollama             │   │   A: checkRelevance                          │
+│ ~2s                             │   │   C+D+E+F: getChunkStats + extractSubject    │
+│                                 │   │            + evaluateChunk + checkGrammar    │
+│                                 │   │            (parallel within chunk)           │
+│                                 │   │   G: refineChunk (if grammar issues)         │
+│                                 │   │   B: image resolution                        │
+│                                 │   │   H: updateCoverage                          │
 └────────────┬────────────────────┘   └───────────────┬──────────────────────────────┘
              ↓                                        ↓
      Gallery mounts immediately            background.js pushes update_nuggets
-     popup closes                          to tab via chrome.tabs.sendMessage
+     popup closes                          to tab via chrome.tabs.sendMessage (~20-30s)
                                                        ↓
                                            content.js receives update_nuggets:
                                              • sessionData.geminiNuggets = original
@@ -126,8 +141,8 @@ DOM extracted (text blocks + image URLs)
                                              • gallery re-renders if open
 ```
 
-**Why a ReAct Loop:**
-Instead of hardcoded sequential steps, the LLM itself drives the pipeline. A system prompt provides the full plan, available tools (checkRelevance, findMatchingImage, generateChunkImage, getChunkStats, extractSubject, evaluateChunk, checkGrammar, refineChunk, updateCoverage), and chunk data. The LLM generates `{ thought, tool, args }` each turn, the runtime executes the tool and feeds the result back. The LLM then reasons about what to do next — skipping refinement if grammar is proper, dropping ad chunks, etc. — until all chunks are processed and it emits `DONE`.
+**Why parallel instead of ReAct:**
+The original sequential ReAct loop had the LLM decide each next tool call — introducing 70+ round-trips and 3–5 minutes of latency per page. The parallel pipeline replaces LLM-driven sequencing with a fixed, well-understood tool plan. Since the tool sequence is deterministic per chunk (checkRelevance → stats/subject/evaluate/grammar → conditional refine → image → coverage), hardcoding it as concurrent async work is faster, cheaper, and equally effective. The LLM reasoning budget is spent on *within-tool* quality (evaluation scores, grammar judgements, refinements) rather than meta-decisions about which tool to call next.
 
 **Session state preservation:**
 Both versions are kept in memory — `sessionData.geminiNuggets` (original) and `sessionData.nuggets` (Agent refined, live after update). The gallery subtitle appends `· ✦ refined by Agent` when the update arrives.

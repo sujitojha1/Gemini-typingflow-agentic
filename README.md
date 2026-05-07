@@ -13,9 +13,10 @@ Popup opens
 User clicks "Process Page Intelligence"
   → content.js extracts text blocks + image URLs from the page
   → Track 1 (Normal Process): Primary Model Pool called immediately to generate chunks → gallery opens → popup closes
-  → Track 2 (Agentic Process): LLM-driven ReAct loop triggers asynchronously in background
-      → system prompt + tool definitions → LLM generates { thought, tool, args } → runtime executes → result fed back
-      → loops per-chunk: checkRelevance → image → stats → evaluation → grammar → refinement → coverage
+  → Track 2 (Agentic Process): Parallel chunk pipeline triggers asynchronously in background
+      → for each nugget (up to 3 concurrent):
+          checkRelevance → getChunkStats + extractSubject + evaluateChunk + checkGrammar (parallel)
+          → refineChunk (conditional) → image resolution → updateCoverage
       → on completion → extension switches to the refined chunks
       → toast: "✦ Agent refined your nuggets" → gallery updates in place
 
@@ -34,14 +35,22 @@ Session complete → one-click Markdown export
 TypingFlow utilizes a dual-track architecture triggered simultaneously when you click "Process Page Intelligence":
 
 1. **Track 1: Normal Process (Deterministic)**
-   - Fast initial chunking that structures the page intelligence and generates the first set of chunks using the primary model pool (e.g., `gemini-3.1-flash-lite-preview`).
+   - Fast initial chunking that structures the page intelligence and generates the first set of chunks using the active model pool.
+   - Supports both Google AI models and local Ollama models.
    - Blocks the UI briefly (~2s) and mounts the gallery immediately for instant user interaction.
 
-2. **Track 2: Agentic Process (ReAct Loop)**
-   - Triggers asynchronously in the background.
-   - Uses a **ReAct (Reasoning + Acting)** pattern: a system prompt provides the LLM with all available tools and the full plan. The LLM generates `{ thought, tool, args }`, the runtime executes the tool, feeds the result back, and the LLM decides the next step — looping until it emits `DONE`.
-   - Processes each chunk through: `checkRelevance` → `findMatchingImage`/`generateChunkImage` → `getChunkStats` → `extractSubject` → `evaluateChunk` → `checkGrammar` → `refineChunk` (conditional) → `updateCoverage`.
+2. **Track 2: Agentic Process (Parallel Pipeline)**
+   - Triggers asynchronously in the background using a concurrency-limited parallel pipeline (up to 3 chunks simultaneously).
+   - Each chunk runs a fixed tool sequence: `checkRelevance` → `getChunkStats` + `extractSubject` + `evaluateChunk` + `checkGrammar` (all parallel within a chunk) → `refineChunk` (conditional on grammar issues) → image resolution → `updateCoverage`.
+   - Tools in Track 2 always use Google AI models regardless of the active Track 1 provider.
+   - Performance: ~20–30 seconds vs. 3–5 minutes for the previous sequential ReAct loop.
    - Once complete, the extension seamlessly **switches to the refined chunks**, updating the gallery live with a toast notification. Users can click "view agent logs" to inspect the full tool call history per chunk.
+
+### Multi-Provider Model Support
+Settings offers a choice between two model providers:
+
+- **Google AI** — Default. Uses `geminiApiKey` stored in `chrome.storage.sync`. Supports a configurable pool of Gemini and Gemma models with per-model enable/disable toggles and custom model IDs.
+- **Ollama** — Local inference. Point it at a running Ollama server (default `http://localhost:11434`). Fetch available models automatically or add them manually. Track 2 agent tools always fall back to Google AI even when Ollama is selected for Track 1.
 
 ### Agentic Page Intelligence
 The popup runs a lightweight DOM scan the instant it opens — before any API call — and surfaces two real-time chips:
@@ -83,20 +92,26 @@ On session completion, exports an Obsidian/Notion-ready `.md` file:
 | File | Role |
 |---|---|
 | `manifest.json` | MV3 manifest — permissions, background service worker, options UI |
-| `background.js` | Owns all API calls: Agent pipeline orchestration, Gemini text structuring, Gemini image generation, picsum fallback; pushes `update_nuggets` directly to tabs |
+| `shared_config.js` | Single source of truth for default Google model definitions; imported by `background.js` and `options.html` |
+| `background.js` | Service-worker core: API calls, model pool management (Google + Ollama), Track 1 structuring, image generation, Picsum fallback; pushes `update_nuggets` to tabs |
+| `agentic_flow.js` | Track 2 parallel chunk pipeline — concurrency-limited, tool orchestration per nugget |
+| `tools/tool_helper.js` | Shared `callToolModel()` helper used by all tool files — tries every model in `AGENT_MODEL_POOL` with fallback |
+| `tools/tool_*.js` | Individual tool implementations: `checkRelevance`, `getChunkStats`, `extractSubject`, `evaluateChunk`, `checkGrammar`, `refineChunk`, `lookupDefinition`, `summarizePage`, `searchNuggets`, `calculate`, `updateCoverage` |
 | `content.js` | DOM extraction; full overlay UI (gallery + typing + bottom bar); audio synthesis; `update_nuggets` handler with toast + live gallery refresh; Markdown export |
-| `popup.js` | Popup init — DOM scan on open; fires background task + Gemini call in parallel on extract; dynamic content script injection |
+| `popup.js` | Popup init — DOM scan on open; fires background task + structuring call in parallel on extract; dynamic content script injection |
 | `popup.html` | Dark popup: header, word/image stat chips, refresh + settings icon buttons, action buttons, loader |
-| `options.html/js` | API key input, saved to `chrome.storage.sync` |
+| `options.html/js` | Provider selector (Google / Ollama), API key input, Google model pool manager, Ollama URL + model pool manager; all saved to `chrome.storage.sync` |
 
 ---
 
 ## Setup
 
 1. Load as unpacked extension at `chrome://extensions` (Developer Mode on)
-2. Click the extension icon → **⚙** → paste your Google AI API key → **Secure API Key**
+2. Click the extension icon → **⚙** → choose provider:
+   - **Google AI**: paste your Google AI API key → **Save Settings**
+   - **Ollama**: set the base URL → **Fetch Models** (or add manually) → **Save Settings**
 3. Navigate to any article — word count and image count appear instantly on popup open
-4. Click **Process Page Intelligence** — gallery opens in ~2s (Normal Process), then refines silently (Agentic Process)
+4. Click **Process Page Intelligence** — gallery opens in ~2s (Normal Process), then refines silently in ~20–30s (Agentic Process)
 5. Click any nugget card to start typing
 
 ---
@@ -105,11 +120,15 @@ On session completion, exports an Obsidian/Notion-ready `.md` file:
 
 | Model | Purpose |
 |---|---|
-| `gemma-4-31b-it` | Alternative model in the pool for multimodal text/image background processing |
-| `gemini-3.1-flash-lite-preview` | Fast initial text structuring & Agentic semantic chunking and refinement loops |
-| `gemini-2.5-flash-image` | Per-nugget contextual image generation |
+| `gemini-3.1-flash-lite-preview` | Default pool — fast text structuring & agent tool calls |
+| `gemini-3-flash-preview` | Pool option — higher-quality structuring |
+| `gemini-2.5-flash-lite` | Pool option — lightweight and fast |
+| `gemma-4-26b-a4b-it` | Pool option — vision-capable, multimodal |
+| `gemma-4-31b-it` | Pool option — vision-capable, larger |
+| `gemini-2.5-flash-image` | Per-nugget contextual image generation (always Google AI) |
+| *(any Ollama model)* | Track 1 structuring when Ollama provider is selected |
 
-All three use the same Google AI API key.
+All Google models share the same Google AI API key. Agent tool calls (Track 2) always use Google models regardless of provider selection.
 
 ---
 
