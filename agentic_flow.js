@@ -347,7 +347,7 @@ async function processChunksInParallel(tabId, nuggets, imageIndex, sessionId, in
         () => { chrome.runtime.lastError; }
     );
 
-    agentBroadcast(tabId, '[Agent] Complete', '—',
+    agentBroadcast(tabId, 'refined', '—',
         `${validResults.length}/${results.length} valid | ${Date.now() - loopStart}ms`);
 }
 

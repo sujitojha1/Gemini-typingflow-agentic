@@ -395,9 +395,12 @@ const INJECT_CSS = `
 `;
 
 function agentBarHTML() {
-    return `<div class="tf-agent-bar tf-agent-active" id="tf-agent-bar">
+    const isDone = sessionData && sessionData.isAgentRefined;
+    const cls    = isDone ? 'tf-agent-done' : 'tf-agent-active';
+    const text   = isDone ? 'agent · refined' : 'agent · enhancing';
+    return `<div class="tf-agent-bar ${cls}" id="tf-agent-bar">
         <div class="tf-agent-pip"></div>
-        <span id="tf-agent-task">agent · ready</span>
+        <span id="tf-agent-task">${text}</span>
         <span class="tf-agent-model-label" id="tf-agent-model"></span>
     </div>`;
 }
