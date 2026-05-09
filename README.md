@@ -4,6 +4,7 @@ A Chrome extension that transforms dense web articles into active-recall typing 
 
 ---
 
+
 ## How It Works
 
 ```
