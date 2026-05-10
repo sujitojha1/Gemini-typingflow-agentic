@@ -1074,7 +1074,10 @@ source: ${window.location.href}
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Gemini_Insights_${Date.now()}.md`;
+    const now = new Date();
+    const stamp = `${now.getDate()}${now.toLocaleString('en', { month: 'short' })}${now.getFullYear()}`;
+    const slug = document.title.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 60);
+    a.download = `${slug}_${stamp}.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
