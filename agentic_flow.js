@@ -265,6 +265,7 @@ async function runAgentPipeline(tabId) {
     }
 
     const nuggets = structureResult.api_response.nuggets || [];
+    nuggets.forEach(n => { if (n.text) n.text = normalizeForTyping(n.text); });
     agentBroadcast(tabId, '[4/4] Mounting', usedModel.label, `${nuggets.length} nuggets`);
 
     // Mount UI and wait for overlay to confirm open before closing popup
