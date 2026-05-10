@@ -38,7 +38,8 @@ function normalizeForTyping(text) {
         .replace(/[–—―−﹘﹣－]/g, '-') // en/em/minus dashes → -
         .replace(/…/g, '...')                                 // ellipsis → ...
         .replace(/[     ]/g, ' ')        // non-breaking/thin spaces → space
-        .replace(/•/g, '*');                                  // bullet → *
+        .replace(/•/g, '*')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '');  // strip diacritics (é→e, î→i, ç→c)                                  // bullet → *
 }
 
 function agentBroadcast(tabId, task, model, detail = '') {
