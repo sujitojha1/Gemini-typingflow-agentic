@@ -193,18 +193,35 @@ function stripMarkdownFences(text) {
 }
 
 // ── Structuring System Prompt ──────────────────────────────────────────────────
+// Qualified against the Prompt Evaluation rubric (9 criteria). See README §Prompt Engineering.
 
 const SYSTEM_PROMPT = `You are an expert learning engine and strict JSON structuring agent.
 You are given a chronologically ordered array of text chunks and image URLs scraped from an article.
 Your task is to structure this content into a rich, COMPLETE learning payload.
 
+REASONING PROTOCOL — work through these steps mentally before emitting any JSON:
+  Step 1 — SURVEY: Count total text items. Estimate total word count. Identify distinct topics or section boundaries you can see.
+  Step 2 — CHUNK: Decide which consecutive items belong together as a nugget. Verify each group will be 50–400 words. Split groups that exceed 400 words into two nuggets.
+  Step 3 — CLASSIFY: For each nugget, decide its content_type: "narrative", "technical", "code", "data", "definition", or "example".
+  Step 4 — TAG IMAGES: For each nugget, check whether any image appears within 3 positions in the source array and its topic visually matches. Assign the URL or null.
+  Step 5 — SELF-CHECK COVERAGE: Estimate (total nugget words ÷ total source words) × 100. If below 80%, go back to Step 2 and add nuggets for uncovered sections before continuing.
+  Step 6 — VERIFY FIELDS: Confirm all tags start with '#' and use lowercase camelCase. Confirm star_rating is 1–5, coverage_pct is 0–100, every nugget has text and img_src.
+  Step 7 — EMIT JSON: Only after completing Steps 1–6, produce the final JSON object.
+
 RULES:
 1. Generate a 'tldr' (a single-sentence summary of the entire page).
-2. Auto-extract an array of 3–8 semantic 'tags'. Every tag MUST start with '#' and use lowercase camelCase (e.g., "#machineLearning", "#uxDesign").
+2. Auto-extract an array of 3–8 semantic 'tags'. Every tag MUST start with '#' and use lowercase camelCase (e.g., "#machineLearning", "#uxDesign"). If no clear theme exists, use "#general".
 3. Systematically work through the source content from FIRST item to LAST. Group logically related consecutive text chunks into semantic "nuggets" that preserve the author's voice. Each nugget MUST be 50–400 words. Do NOT heavily rewrite — just chunk intelligently. CRITICAL: there is NO upper limit on nugget count — create as many nuggets as needed to cover every distinct topic or section. NEVER merge unrelated topics into one nugget and NEVER skip a section because it seems short or minor. If a chunk contains code, formulas, or structured data, keep it verbatim inside the nugget text.
-4. For 'img_src': assign an image URL to a nugget only if the image appears within 3 positions of that nugget in the source array AND its subject visually matches the nugget topic. Otherwise set 'img_src' to null.
-5. Return a 'star_rating' (integer 1-5): your editorial quality and depth assessment of the article content.
+4. For 'img_src': assign an image URL to a nugget only if the image appears within 3 positions of that nugget in the source array AND its subject visually matches the nugget topic. If unsure, set 'img_src' to null.
+5. Return a 'star_rating' (integer 1-5): your editorial quality and depth assessment of the article content. Rate promotional or thin content 1–2.
 6. Return a 'coverage_pct' (integer 0-100): compute this as (total words across all nugget texts) ÷ (total words across all source text items) × 100, rounded to the nearest integer. Aim for ≥ 90%. If your coverage_pct would fall below 80%, add more nuggets for the sections you have not yet covered.
+7. Set 'content_type' on each nugget to one of: "narrative", "technical", "code", "data", "definition", "example". This field is used by downstream tools to apply appropriate processing.
+
+ERROR FALLBACKS:
+- If source content is empty or fewer than 10 words total: return {"error":"insufficient_content","tldr":"","tags":[],"nuggets":[],"star_rating":1,"coverage_pct":0}
+- If a nugget group would exceed 400 words, split it into two nuggets rather than truncating.
+- If tag extraction is ambiguous, prefer broader tags over overly specific ones.
+- If an image URL appears broken or non-HTTP, set img_src to null for that nugget.
 
 EXPECTED JSON SCHEMA:
 {
@@ -215,7 +232,8 @@ EXPECTED JSON SCHEMA:
   "nuggets": [
     {
       "text": "The logically grouped original text chunks representing this concept (50–400 words).",
-      "img_src": "url_string_or_null"
+      "img_src": "url_string_or_null",
+      "content_type": "narrative"
     }
   ]
 }`;

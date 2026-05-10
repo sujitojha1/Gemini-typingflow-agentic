@@ -342,6 +342,7 @@ async function processChunksInParallel(tabId, nuggets, imageIndex, sessionId, in
             subject: r.subject,
             stats: r.stats,
             score: r.evaluation?.score ?? null,
+            content_type: r.contentType || null,
         })),
         // Preserve top-level metadata from initial structuring
         tldr: initialData.tldr,
@@ -372,6 +373,7 @@ async function processOneChunk(nugget, chunkIdx, totalChunks, imageIndex, tabId)
     const steps = [];
     const text = nugget.text || '';
     const tags = nugget.tags || [];
+    const contentType = nugget.content_type || null;
 
     // Step A: Relevance check (heuristic-first, saves LLM call for ~30% of chunks)
     const relevance = await toolCheckRelevance({ text })
@@ -438,6 +440,7 @@ async function processOneChunk(nugget, chunkIdx, totalChunks, imageIndex, tabId)
         subject: subject.subject || 'Untitled',
         stats,
         evaluation,
+        contentType,
         steps,
     };
 }
