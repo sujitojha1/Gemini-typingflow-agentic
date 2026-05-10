@@ -292,14 +292,29 @@ const INJECT_CSS = `
   .tf-coverage-bar { display: inline-block; width: 80px; height: 4px; background: #222; border-radius: 2px; vertical-align: middle; margin: 0 6px; position: relative; overflow: hidden; }
   .tf-coverage-fill { position: absolute; left: 0; top: 0; height: 100%; background: #27c93f; border-radius: 2px; }
 
-  .tf-readability-chip { 
-    display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04); 
-    padding: 3px 10px; border-radius: 20px; font-size: 11px; color: #777; font-family: 'Menlo', monospace; 
+  .tf-readability-chip {
+    display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04);
+    padding: 3px 10px; border-radius: 20px; font-size: 11px; color: #777; font-family: 'Menlo', monospace;
   }
   .tf-readability-val { color: #E1C04C; font-weight: 700; }
   .tf-complexity-Simple { color: #27c93f; }
   .tf-complexity-Medium { color: #E1C04C; }
   .tf-complexity-Complex { color: #ff5555; }
+
+  .tf-page-nav {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+  }
+  .tf-page-btn {
+    width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+    color: #4a8cd4; font-size: 14px; border-radius: 4px; cursor: pointer;
+    font-family: 'Menlo', monospace; transition: all 0.15s; flex-shrink: 0;
+  }
+  .tf-page-btn:hover:not(:disabled) { background: rgba(74,140,212,0.2); border-color: #4a8cd4; }
+  .tf-page-btn:disabled { color: #333; border-color: rgba(255,255,255,0.04); cursor: not-allowed; }
+  .tf-page-label {
+    font-size: 11px; color: #555; font-family: 'Menlo', monospace; letter-spacing: 0.4px;
+  }
 
   .tf-log-btn { background: rgba(74, 140, 212, 0.1); border: 1px solid rgba(74, 140, 212, 0.4); color: #4a8cd4; font-size: 11px; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-family: 'Menlo', monospace; margin-left: 15px; transition: all 0.15s; }
   .tf-log-btn:hover { background: rgba(74, 140, 212, 0.25); border-color: #4a8cd4; box-shadow: 0 0 10px rgba(74, 140, 212, 0.2); }
@@ -803,6 +818,30 @@ function openOverlay() {
     renderNuggetGallery();
 }
 
+const PAGE_CHAR_LIMIT = 900;
+
+function paginateText(text, maxChars) {
+    if (text.length <= maxChars) return [text];
+    const pages = [];
+    let start = 0;
+    while (start < text.length) {
+        if (start + maxChars >= text.length) {
+            pages.push(text.slice(start));
+            break;
+        }
+        let end = start + maxChars;
+        while (end > start && text[end] !== ' ') end--;
+        if (end === start) {
+            end = start + maxChars;
+        } else {
+            end++; // include the trailing space so no character is skipped
+        }
+        pages.push(text.slice(start, end));
+        start = end;
+    }
+    return pages;
+}
+
 function renderCurrentNugget() {
     if (currentNuggetIndex >= sessionData.nuggets.length) {
         renderCompletionState();
@@ -814,6 +853,13 @@ function renderCurrentNugget() {
     const nugget = sessionData.nuggets[currentNuggetIndex];
     const capturedIndex = currentNuggetIndex;
     const textToType = nugget.text.replace(/\s+/g, ' ');
+    const pages = paginateText(textToType, PAGE_CHAR_LIMIT);
+    const isMultiPage = pages.length > 1;
+    const totalChars = textToType.length;
+    // Pre-compute start char offset of each page within the full text
+    const pageStartIdx = [];
+    let _acc = 0;
+    for (const p of pages) { pageStartIdx.push(_acc); _acc += p.length; }
     const isFirst = currentNuggetIndex === 0;
     const hasImage = !!nugget.img_src;
     const total = sessionData.nuggets.length;
@@ -843,6 +889,11 @@ function renderCurrentNugget() {
                     <div class="tf-pips">${pipsHtml}</div>
                     <span class="tf-progress-label"><strong>${current}</strong> of ${total}</span>
                 </div>
+                ${isMultiPage ? `<div class="tf-page-nav" id="tf-page-nav">
+                    <button class="tf-page-btn" id="tf-page-up" disabled>↑</button>
+                    <span class="tf-page-label" id="tf-page-label">page 1 / ${pages.length}</span>
+                    <button class="tf-page-btn" id="tf-page-dn">↓</button>
+                </div>` : ''}
                 <div id="tf-target"></div>
                 <input type="text" class="tf-hidden-input" id="tf-type-input" autocomplete="off" spellcheck="false" />
             </div>
@@ -899,14 +950,29 @@ function renderCurrentNugget() {
         });
     }
 
-    // Build char spans via DOM to avoid XSS
+    // Page state + span helpers
     const targetDiv = document.getElementById('tf-target');
-    for (let i = 0; i < textToType.length; i++) {
-        const span = document.createElement('span');
-        span.className = 'tf-char';
-        span.textContent = textToType[i];
-        targetDiv.appendChild(span);
+    let currentPage = 0;
+
+    function buildPageSpans(pageText) {
+        targetDiv.innerHTML = '';
+        for (let i = 0; i < pageText.length; i++) {
+            const span = document.createElement('span');
+            span.className = 'tf-char';
+            span.textContent = pageText[i];
+            targetDiv.appendChild(span);
+        }
+        targetDiv.querySelectorAll('.tf-char')[0]?.classList.add('cursor');
     }
+
+    function updatePageLabel() {
+        const lbl = document.getElementById('tf-page-label');
+        const upBtn = document.getElementById('tf-page-up');
+        if (lbl) lbl.textContent = `page ${currentPage + 1} / ${pages.length}`;
+        if (upBtn) upBtn.disabled = currentPage === 0;
+    }
+
+    buildPageSpans(pages[0]);
 
     document.getElementById('tf-close-btn').addEventListener('click', closeOverlay);
     document.getElementById('tf-all-btn').addEventListener('click', renderNuggetGallery);
@@ -935,7 +1001,7 @@ function renderCurrentNugget() {
         currentNuggetIndex++;
         renderCurrentNugget();
     });
-    
+
     const prevBtn = document.getElementById('tf-prev-btn');
     if (!isFirst) {
         prevBtn.addEventListener('click', () => {
@@ -951,11 +1017,38 @@ function renderCurrentNugget() {
     const bottomBar = document.getElementById('tf-bottom-bar');
     let prevTypedLen = 0;
 
-    targetDiv.querySelectorAll('.tf-char')[0]?.classList.add('cursor');
+    // Page nav buttons — only wired when nugget has >900 chars
+    if (isMultiPage) {
+        document.getElementById('tf-page-up').addEventListener('click', () => {
+            if (currentPage > 0) {
+                currentPage--;
+                input.value = '';
+                prevTypedLen = 0;
+                buildPageSpans(pages[currentPage]);
+                updatePageLabel();
+                input.focus();
+            }
+        });
+        document.getElementById('tf-page-dn').addEventListener('click', () => {
+            if (currentPage < pages.length - 1) {
+                currentPage++;
+                input.value = '';
+                prevTypedLen = 0;
+                buildPageSpans(pages[currentPage]);
+                updatePageLabel();
+            } else {
+                currentNuggetIndex++;
+                renderCurrentNugget();
+                return;
+            }
+            input.focus();
+        });
+    }
+
     setTimeout(() => input.focus(), 100);
     overlayWrapper.addEventListener('click', () => input.focus());
 
-    // Escape key skips the current chunk
+    // Escape skips the current nugget (all pages)
     const escHandler = (e) => {
         if (e.key === 'Escape') {
             document.removeEventListener('keydown', escHandler);
@@ -968,15 +1061,17 @@ function renderCurrentNugget() {
     input.addEventListener('input', (e) => {
         if (!startTime) startTime = Date.now();
         const typed = e.target.value;
+        const pageText = pages[currentPage];
         const spans = targetDiv.querySelectorAll('.tf-char');
-        if (typed.length > textToType.length) {
-            input.value = typed.slice(0, textToType.length);
+
+        if (typed.length > pageText.length) {
+            input.value = typed.slice(0, pageText.length);
             return;
         }
 
         if (typed.length > prevTypedLen) {
             const newCharIndex = typed.length - 1;
-            if (typed[newCharIndex] === textToType[newCharIndex]) {
+            if (typed[newCharIndex] === pageText[newCharIndex]) {
                 playCorrectSound();
             } else {
                 playWrongSound();
@@ -986,34 +1081,45 @@ function renderCurrentNugget() {
 
         let allCorrect = true;
         let localErrors = 0;
-        
+
         spans.forEach((span, i) => {
             span.className = 'tf-char';
             if (i < typed.length) {
-                if (typed[i] === textToType[i]) {
+                if (typed[i] === pageText[i]) {
                     span.classList.add('correct');
-                } else { 
-                    span.classList.add('wrong'); 
-                    allCorrect = false; 
+                } else {
+                    span.classList.add('wrong');
+                    allCorrect = false;
                     localErrors++;
                 }
             } else if (i === typed.length) span.classList.add('cursor');
         });
 
-        // Basic stats update
+        // Stats track progress across all pages of this nugget
+        const totalTyped = pageStartIdx[currentPage] + typed.length;
         const timeElapsedMin = (Date.now() - startTime) / 60000;
-        const wordsTyped = typed.length / 5;
-        const wpm = timeElapsedMin > 0 ? Math.round(wordsTyped / timeElapsedMin) : 0;
+        const wpm = timeElapsedMin > 0 ? Math.round((totalTyped / 5) / timeElapsedMin) : 0;
         const acc = typed.length > 0 ? Math.round(((typed.length - localErrors) / typed.length) * 100) : 100;
-        
+
         statWpm.textContent = wpm;
         statAcc.textContent = `${acc}%`;
-        statChars.textContent = `${typed.length} / ${textToType.length}`;
-        bottomBar.style.setProperty('--tf-progress', `${Math.round((typed.length / textToType.length) * 100)}%`);
+        statChars.textContent = `${totalTyped} / ${totalChars}`;
+        bottomBar.style.setProperty('--tf-progress', `${Math.round((totalTyped / totalChars) * 100)}%`);
 
-        if (typed.length === textToType.length && allCorrect) {
-            currentNuggetIndex++;
-            setTimeout(() => renderCurrentNugget(), 300);
+        if (typed.length === pageText.length && allCorrect) {
+            if (currentPage < pages.length - 1) {
+                // Auto-advance to next page
+                currentPage++;
+                input.value = '';
+                prevTypedLen = 0;
+                buildPageSpans(pages[currentPage]);
+                if (isMultiPage) updatePageLabel();
+                input.focus();
+            } else {
+                // All pages of this nugget complete
+                currentNuggetIndex++;
+                setTimeout(() => renderCurrentNugget(), 300);
+            }
         }
     });
 }
