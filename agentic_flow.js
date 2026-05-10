@@ -29,6 +29,18 @@ const SECTION_MAX_WORDS = 2000;        // Target words per section in multi-pass
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
+// Replaces typographic characters that can't be typed on a standard keyboard
+// with their closest keyboard-typeable equivalents.
+function normalizeForTyping(text) {
+    return text
+        .replace(/[“”«»‹›]/g, '"')  // curly/guillemet quotes → "
+        .replace(/[‘’‚‛`]/g, "'")         // curly single quotes, backtick → '
+        .replace(/[–—―−﹘﹣－]/g, '-') // en/em/minus dashes → -
+        .replace(/…/g, '...')                                 // ellipsis → ...
+        .replace(/[     ]/g, ' ')        // non-breaking/thin spaces → space
+        .replace(/•/g, '*');                                  // bullet → *
+}
+
 function agentBroadcast(tabId, task, model, detail = '') {
     const msg = { action: 'agent_status', task, model, detail };
     chrome.tabs.sendMessage(tabId, msg, () => { chrome.runtime.lastError; });
@@ -408,13 +420,17 @@ async function processOneChunk(nugget, chunkIdx, totalChunks, imageIndex, tabId)
     const chunkProgress = Math.round(((chunkIdx + 1) / totalChunks) * 100);
     steps.push({ tool: 'updateCoverage', result: { processed: chunkIdx + 1, total: totalChunks } });
 
+    // Step I: Normalize typographic characters to keyboard-typeable equivalents
+    const finalText = normalizeForTyping(refined.refinedText || text);
+    steps.push({ tool: 'normalizeForTyping', result: { applied: true } });
+
     agentBroadcast(tabId, `[C${chunkIdx + 1}/${totalChunks}] Done`, '—',
         `score:${evaluation?.score ?? '?'} grammar:${grammar.isProper ? '✓' : '✗'} progress:${chunkProgress}%`);
 
     return {
         chunkIdx,
         text,
-        refinedText: refined.refinedText || text,
+        refinedText: finalText,
         imgSrc,
         tags,
         subject: subject.subject || 'Untitled',
